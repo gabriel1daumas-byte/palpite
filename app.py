@@ -18,8 +18,6 @@ fuso_br = pytz.timezone('America/Sao_Paulo')
 
 # --- FUNÇÃO PARA CONVERTER O HORÁRIO DO BANCO PARA BRASÍLIA ---
 def converter_para_br(data_string):
-    # O Supabase as vezes retorna com um 'Z' no final indicando UTC. 
-    # Isso garante que o Python entenda e converta certinho para o fuso do Brasil.
     if data_string.endswith('Z'):
         data_string = data_string[:-1] + '+00:00'
     return datetime.fromisoformat(data_string).astimezone(fuso_br)
@@ -100,7 +98,7 @@ else:
     menu = st.sidebar.selectbox("Navegação", opcoes_menu)
 
     # ------------------------------------------
-    # 1. FAZER PALPITES
+    # 1. FAZER PALPITES (AGORA COM TRAVA DEFINITIVA)
     # ------------------------------------------
     if menu == "Fazer Palpites":
         st.subheader("Deixe seus palpites")
@@ -113,6 +111,13 @@ else:
         else:
             agora = datetime.now(fuso_br)
             
+            # Puxa do banco todos os palpites que esse usuário JÁ FEZ nessa rodada
+            ids_jogos_rodada = [j['id'] for j in jogos]
+            palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
+            
+            # Cria um dicionário fácil para checar se ele já apostou no jogo X
+            mapa_ja_palpitou = {p['id_jogo']: p['palpite'] for p in palpites_existentes}
+            
             with st.form("form_palpites"):
                 palpites_feitos = {}
                 jogos_abertos = 0
@@ -120,37 +125,47 @@ else:
                 for jogo in jogos:
                     st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
                     
-                    if jogo.get('horario_fechamento'):
-                        # Aqui usamos a função nova para puxar o horário no fuso do Brasil!
-                        fechamento = converter_para_br(jogo['horario_fechamento'])
-                        
-                        if agora < fechamento:
-                            st.caption(f"⏳ Fecha em: {fechamento.strftime('%d/%m às %H:%M')}")
+                    # 1ª CHECAGEM: Ele já deu o palpite para esse jogo antes?
+                    if jogo['id'] in mapa_ja_palpitou:
+                        st.success(f"✅ Palpite travado: **{mapa_ja_palpitou[jogo['id']]}**")
+                    
+                    # Se não palpitou ainda, vai para a 2ª CHECAGEM: O jogo ainda está aberto?
+                    else:
+                        if jogo.get('horario_fechamento'):
+                            fechamento = converter_para_br(jogo['horario_fechamento'])
+                            
+                            if agora < fechamento:
+                                st.caption(f"⏳ Fecha em: {fechamento.strftime('%d/%m às %H:%M')}")
+                                opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
+                                escolha = st.radio("Vencedor:", opcoes, horizontal=True, key=f"jogo_{jogo['id']}")
+                                palpites_feitos[jogo['id']] = escolha
+                                jogos_abertos += 1
+                            else:
+                                st.error(f"🔒 Palpites encerrados (Fechou {fechamento.strftime('%d/%m %H:%M')})")
+                        else:
                             opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
                             escolha = st.radio("Vencedor:", opcoes, horizontal=True, key=f"jogo_{jogo['id']}")
                             palpites_feitos[jogo['id']] = escolha
                             jogos_abertos += 1
-                        else:
-                            st.error(f"🔒 Palpites encerrados (Fechou {fechamento.strftime('%d/%m %H:%M')})")
-                    else:
-                        opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
-                        escolha = st.radio("Vencedor:", opcoes, horizontal=True, key=f"jogo_{jogo['id']}")
-                        palpites_feitos[jogo['id']] = escolha
-                        jogos_abertos += 1
                         
                     st.write("---")
                 
-                enviar = st.form_submit_button("Salvar Palpites")
-                
-                if enviar and jogos_abertos > 0:
-                    for id_jogo, palpite in palpites_feitos.items():
-                        supabase.table("palpites").delete().match({"nome_amigo": st.session_state.nome_usuario, "id_jogo": id_jogo}).execute()
-                        supabase.table("palpites").insert({
-                            "nome_amigo": st.session_state.nome_usuario,
-                            "id_jogo": id_jogo,
-                            "palpite": palpite
-                        }).execute()
-                    st.success("Palpites salvos com sucesso!")
+                # Só mostra o botão se tiver algum jogo novo para preencher
+                if jogos_abertos > 0:
+                    enviar = st.form_submit_button("Salvar Novos Palpites")
+                    
+                    if enviar:
+                        for id_jogo, palpite in palpites_feitos.items():
+                            # Faz APENAS o insert, pois o usuário não consegue mais alterar opções enviadas
+                            supabase.table("palpites").insert({
+                                "nome_amigo": st.session_state.nome_usuario,
+                                "id_jogo": id_jogo,
+                                "palpite": palpite
+                            }).execute()
+                        st.success("Palpites salvos e trancados com sucesso!")
+                        st.rerun() # Recarrega a página para atualizar o status para "Travado"
+                else:
+                    st.form_submit_button("Todos os palpites foram feitos ou estão fechados", disabled=True)
 
     # ------------------------------------------
     # 2. MEUS PALPITES 
@@ -192,7 +207,6 @@ else:
             df_jogos = pd.DataFrame(jogos)
             df_palpites = pd.DataFrame(palpites)
             
-            # Atualizado para usar a conversão de horário do Brasil
             map_fechamento = {j['id']: converter_para_br(j['horario_fechamento']) for j in jogos if j.get('horario_fechamento')}
             
             ids_jogos_rodada = df_jogos['id'].tolist()

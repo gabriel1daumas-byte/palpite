@@ -146,7 +146,7 @@ else:
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos"]
             
-           st.dataframe(df_geral, use_container_width=True, height=450)
+            st.dataframe(df_geral, use_container_width=True, height=450)
     # ------------------------------------------
     # 2. TOTAL POR RODADA
     # ------------------------------------------

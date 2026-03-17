@@ -16,37 +16,64 @@ def init_connection():
 supabase = init_connection()
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
-# --- CONTROLE DE SESSÃO (LOGIN) ---
+# --- CONTROLE DE SESSÃO ---
 if "logado" not in st.session_state:
     st.session_state.logado = False
     st.session_state.nome_usuario = ""
     st.session_state.email_usuario = ""
+    st.session_state.is_admin = False
 
 # ==========================================
-# TELA DE LOGIN (BARREIRA DE ACESSO)
+# TELA DE ACESSO (LOGIN / CADASTRO DE SENHA)
 # ==========================================
 if not st.session_state.logado:
     st.title("🔒 Acesso ao Bolão")
-    st.write("Digite seu e-mail cadastrado para acessar.")
+    st.write("Identifique-se para acessar os palpites.")
     
-    with st.form("form_login"):
-        email_digitado = st.text_input("Seu E-mail:")
-        submit_login = st.form_submit_button("Entrar")
+    email_digitado = st.text_input("Qual o seu e-mail?")
+    
+    if email_digitado:
+        email_limpo = email_digitado.lower().strip()
+        resposta = supabase.table("usuarios").select("*").eq("email", email_limpo).execute()
         
-        if submit_login:
-            if email_digitado:
-                email_limpo = email_digitado.lower().strip()
-                resposta = supabase.table("usuarios").select("*").eq("email", email_limpo).execute()
+        # O E-MAIL ESTÁ NA LISTA?
+        if len(resposta.data) > 0:
+            usuario = resposta.data[0]
+            
+            # É O PRIMEIRO ACESSO (SENHA VAZIA)?
+            if usuario.get("senha") is None or usuario.get("senha") == "":
+                st.info(f"Olá, {usuario['nome']}! Este é seu primeiro acesso. Crie uma senha para continuar.")
+                nova_senha = st.text_input("Crie sua senha:", type="password")
                 
-                if len(resposta.data) > 0:
-                    st.session_state.logado = True
-                    st.session_state.nome_usuario = resposta.data[0]['nome']
-                    st.session_state.email_usuario = email_limpo
-                    st.rerun()
-                else:
-                    st.error("E-mail não encontrado! Fale com o admin para liberar seu acesso.")
+                if st.button("Salvar Senha e Entrar"):
+                    if nova_senha:
+                        # Salva a senha nova no banco
+                        supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email_limpo).execute()
+                        st.success("Senha cadastrada!")
+                        # Faz o login
+                        st.session_state.logado = True
+                        st.session_state.nome_usuario = usuario['nome']
+                        st.session_state.email_usuario = email_limpo
+                        st.session_state.is_admin = usuario.get('is_admin', False)
+                        st.rerun()
+                    else:
+                        st.warning("A senha não pode ser vazia.")
+            
+            # JÁ TEM SENHA (FAZ LOGIN NORMAL)
             else:
-                st.warning("Por favor, digite um e-mail.")
+                senha_digitada = st.text_input("Sua Senha:", type="password")
+                
+                if st.button("Entrar"):
+                    if senha_digitada == usuario["senha"]:
+                        st.session_state.logado = True
+                        st.session_state.nome_usuario = usuario['nome']
+                        st.session_state.email_usuario = email_limpo
+                        st.session_state.is_admin = usuario.get('is_admin', False)
+                        st.rerun()
+                    else:
+                        st.error("Senha incorreta!")
+        else:
+            st.error("E-mail não está na lista de convidados! Fale com o admin.")
 
 # ==========================================
 # SISTEMA PRINCIPAL (SÓ PARA LOGADOS)
@@ -59,12 +86,16 @@ else:
     with col2:
         if st.button("Sair"):
             st.session_state.logado = False
+            st.session_state.is_admin = False
             st.rerun()
             
     st.divider()
 
-    menu = st.sidebar.selectbox("Navegação", 
-                                ["Fazer Palpites", "Ver Palpites da Galera", "Classificação", "⚙️ Admin"])
+    opcoes_menu = ["Fazer Palpites", "Ver Palpites da Galera", "Classificação"]
+    if st.session_state.is_admin:
+        opcoes_menu.append("⚙️ Admin")
+        
+    menu = st.sidebar.selectbox("Navegação", opcoes_menu)
 
     # ------------------------------------------
     # 1. FAZER PALPITES
@@ -87,7 +118,6 @@ else:
                 for jogo in jogos:
                     st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
                     
-                    # Checa o horário de fechamento
                     if jogo.get('horario_fechamento'):
                         fechamento = datetime.fromisoformat(jogo['horario_fechamento'])
                         
@@ -100,7 +130,6 @@ else:
                         else:
                             st.error(f"🔒 Palpites encerrados (Fechou {fechamento.strftime('%d/%m %H:%M')})")
                     else:
-                        # Jogos sem horário cadastrado ficam abertos por padrão
                         opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
                         escolha = st.radio("Vencedor:", opcoes, horizontal=True, key=f"jogo_{jogo['id']}")
                         palpites_feitos[jogo['id']] = escolha
@@ -179,46 +208,41 @@ else:
     # 4. ADMIN
     # ------------------------------------------
     elif menu == "⚙️ Admin":
-        st.warning("Área Restrita")
-        senha = st.text_input("Senha Admin", type="password")
+        st.subheader("1. Cadastrar Novo Jogo")
+        with st.form("novo_jogo"):
+            col1, col2, col3 = st.columns([1, 2, 2])
+            rod = col1.number_input("Rod", min_value=1, step=1)
+            casa = col2.text_input("Time Mandante")
+            fora = col3.text_input("Time Visitante")
+            
+            col4, col5 = st.columns(2)
+            data_fechamento = col4.date_input("Data Limite (Fechamento)")
+            hora_fechamento = col5.time_input("Hora Limite", value=time(16, 0))
+            
+            if st.form_submit_button("Cadastrar Partida"):
+                dt_fechamento = fuso_br.localize(datetime.combine(data_fechamento, hora_fechamento))
+                
+                supabase.table("jogos").insert({
+                    "rodada": rod, 
+                    "time_casa": casa, 
+                    "time_fora": fora,
+                    "horario_fechamento": dt_fechamento.isoformat()
+                }).execute()
+                st.success(f"Jogo adicionado! Fechamento: {dt_fechamento.strftime('%d/%m %H:%M')}")
         
-        if senha == "1234":
-            st.subheader("1. Cadastrar Novo Jogo")
-            with st.form("novo_jogo"):
-                col1, col2, col3 = st.columns([1, 2, 2])
-                rod = col1.number_input("Rod", min_value=1, step=1)
-                casa = col2.text_input("Time Mandante")
-                fora = col3.text_input("Time Visitante")
-                
-                col4, col5 = st.columns(2)
-                data_fechamento = col4.date_input("Data Limite (Fechamento)")
-                hora_fechamento = col5.time_input("Hora Limite", value=time(16, 0))
-                
-                if st.form_submit_button("Cadastrar Partida"):
-                    # Combina data e hora e aplica o fuso horário de Brasília
-                    dt_fechamento = fuso_br.localize(datetime.combine(data_fechamento, hora_fechamento))
-                    
-                    supabase.table("jogos").insert({
-                        "rodada": rod, 
-                        "time_casa": casa, 
-                        "time_fora": fora,
-                        "horario_fechamento": dt_fechamento.isoformat()
-                    }).execute()
-                    st.success(f"Jogo adicionado! Fechamento: {dt_fechamento.strftime('%d/%m %H:%M')}")
-            
-            st.divider()
-            
-            st.subheader("2. Lançar Resultado Final")
-            rod_resultado = st.number_input("Filtrar por Rodada", min_value=1, step=1, key="rod_res")
-            jogos_pendentes = supabase.table("jogos").select("*").eq("rodada", rod_resultado).is_("resultado_real", "null").execute().data
-            
-            if jogos_pendentes:
-                for jogo in jogos_pendentes:
-                    st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
-                    vencedor = st.selectbox("Quem ganhou?", [jogo['time_casa'], "Empate", jogo['time_fora']], key=f"res_{jogo['id']}")
-                    if st.button("Salvar Resultado", key=f"btn_{jogo['id']}"):
-                        supabase.table("jogos").update({"resultado_real": vencedor}).eq("id", jogo["id"]).execute()
-                        st.success("Resultado atualizado! Ranking recalculado.")
-                        st.rerun()
-            else:
-                st.write("Nenhum jogo aguardando resultado nesta rodada.")
+        st.divider()
+        
+        st.subheader("2. Lançar Resultado Final")
+        rod_resultado = st.number_input("Filtrar por Rodada", min_value=1, step=1, key="rod_res")
+        jogos_pendentes = supabase.table("jogos").select("*").eq("rodada", rod_resultado).is_("resultado_real", "null").execute().data
+        
+        if jogos_pendentes:
+            for jogo in jogos_pendentes:
+                st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
+                vencedor = st.selectbox("Quem ganhou?", [jogo['time_casa'], "Empate", jogo['time_fora']], key=f"res_{jogo['id']}")
+                if st.button("Salvar Resultado", key=f"btn_{jogo['id']}"):
+                    supabase.table("jogos").update({"resultado_real": vencedor}).eq("id", jogo["id"]).execute()
+                    st.success("Resultado atualizado! Ranking recalculado.")
+                    st.rerun()
+        else:
+            st.write("Nenhum jogo aguardando resultado nesta rodada.")

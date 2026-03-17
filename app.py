@@ -146,8 +146,7 @@ else:
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos"]
             
-            st.dataframe(df_geral, use_container_width=True)
-
+           st.dataframe(df_geral, use_container_width=True, height=450)
     # ------------------------------------------
     # 2. TOTAL POR RODADA
     # ------------------------------------------
@@ -186,7 +185,7 @@ else:
             df_pivot['Total'] = df_pivot.sum(axis=1)
             df_pivot = df_pivot.sort_values(by='Total', ascending=False)
             
-            st.dataframe(df_pivot, use_container_width=True)
+            st.dataframe(df_geral, use_container_width=True, height=450)
 
     # ------------------------------------------
     # 3. RESULTADOS DA RODADA

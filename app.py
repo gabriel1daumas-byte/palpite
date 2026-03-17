@@ -185,7 +185,7 @@ else:
             df_pivot['Total'] = df_pivot.sum(axis=1)
             df_pivot = df_pivot.sort_values(by='Total', ascending=False)
             
-            st.dataframe(df_geral, use_container_width=True, height=450)
+            st.dataframe(df_pivot, use_container_width=True, height=450)
 
     # ------------------------------------------
     # 3. RESULTADOS DA RODADA

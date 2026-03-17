@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime, time
+from datetime import datetime, time, timedelta  # <--- Adicionamos o timedelta aqui
 import pytz
 
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
@@ -36,21 +36,17 @@ if not st.session_state.logado:
         email_limpo = email_digitado.lower().strip()
         resposta = supabase.table("usuarios").select("*").eq("email", email_limpo).execute()
         
-        # O E-MAIL ESTÁ NA LISTA?
         if len(resposta.data) > 0:
             usuario = resposta.data[0]
             
-            # É O PRIMEIRO ACESSO (SENHA VAZIA)?
             if usuario.get("senha") is None or usuario.get("senha") == "":
                 st.info(f"Olá, {usuario['nome']}! Este é seu primeiro acesso. Crie uma senha para continuar.")
                 nova_senha = st.text_input("Crie sua senha:", type="password")
                 
                 if st.button("Salvar Senha e Entrar"):
                     if nova_senha:
-                        # Salva a senha nova no banco
                         supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email_limpo).execute()
                         st.success("Senha cadastrada!")
-                        # Faz o login
                         st.session_state.logado = True
                         st.session_state.nome_usuario = usuario['nome']
                         st.session_state.email_usuario = email_limpo
@@ -58,8 +54,6 @@ if not st.session_state.logado:
                         st.rerun()
                     else:
                         st.warning("A senha não pode ser vazia.")
-            
-            # JÁ TEM SENHA (FAZ LOGIN NORMAL)
             else:
                 senha_digitada = st.text_input("Sua Senha:", type="password")
                 
@@ -82,7 +76,7 @@ else:
     col1, col2 = st.columns([4, 1])
     with col1:
         st.title("🏆 Bolão da Galera")
-        st.write(f"Fala, **{st.session_state.nome_usuario}**! Boa sorte na rodada.")
+        st.write(f"Fala, **{st.session_state.nome_usuario}**!")
     with col2:
         if st.button("Sair"):
             st.session_state.logado = False
@@ -91,7 +85,8 @@ else:
             
     st.divider()
 
-    opcoes_menu = ["Fazer Palpites", "Ver Palpites da Galera", "Classificação"]
+    # --- MENU ATUALIZADO ---
+    opcoes_menu = ["Fazer Palpites", "Meus Palpites", "Ver Palpites da Galera", "Classificação"]
     if st.session_state.is_admin:
         opcoes_menu.append("⚙️ Admin")
         
@@ -150,7 +145,32 @@ else:
                     st.success("Palpites salvos com sucesso!")
 
     # ------------------------------------------
-    # 2. VER PALPITES
+    # 2. MEUS PALPITES (NOVA ABA)
+    # ------------------------------------------
+    elif menu == "Meus Palpites":
+        st.subheader("Meus Palpites")
+        
+        meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).execute().data
+        jogos = supabase.table("jogos").select("*").execute().data
+        
+        if meus_palpites and jogos:
+            df_p = pd.DataFrame(meus_palpites)
+            df_j = pd.DataFrame(jogos)
+            
+            df_completo = pd.merge(df_p, df_j, left_on="id_jogo", right_on="id")
+            df_completo["Partida"] = df_completo["time_casa"] + " x " + df_completo["time_fora"]
+            df_completo["Resultado Real"] = df_completo["resultado_real"].fillna("Aguardando...")
+            
+            df_view = df_completo[["rodada", "Partida", "palpite", "Resultado Real"]].rename(
+                columns={"rodada": "Rodada", "palpite": "Meu Palpite"}
+            ).sort_values("Rodada", ascending=False)
+            
+            st.dataframe(df_view, hide_index=True, use_container_width=True)
+        else:
+            st.info("Você ainda não fez nenhum palpite.")
+
+    # ------------------------------------------
+    # 3. VER PALPITES DA GALERA (COM MÁSCARA)
     # ------------------------------------------
     elif menu == "Ver Palpites da Galera":
         st.subheader("Quem apostou no que?")
@@ -158,10 +178,14 @@ else:
         
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
         palpites = supabase.table("palpites").select("*").execute().data
+        agora = datetime.now(fuso_br)
         
         if jogos and palpites:
             df_jogos = pd.DataFrame(jogos)
             df_palpites = pd.DataFrame(palpites)
+            
+            # Cria um dicionário com o horário de fechamento de cada jogo
+            map_fechamento = {j['id']: datetime.fromisoformat(j['horario_fechamento']) for j in jogos if j.get('horario_fechamento')}
             
             ids_jogos_rodada = df_jogos['id'].tolist()
             df_palpites_rodada = df_palpites[df_palpites['id_jogo'].isin(ids_jogos_rodada)]
@@ -170,7 +194,16 @@ else:
                 df_completo = pd.merge(df_palpites_rodada, df_jogos, left_on="id_jogo", right_on="id")
                 df_completo["Partida"] = df_completo["time_casa"] + " x " + df_completo["time_fora"]
                 
-                tabela = df_completo.pivot_table(index="nome_amigo", columns="Partida", values="palpite", aggfunc='first')
+                # FUNÇÃO PARA OCULTAR O PALPITE SE O JOGO AINDA ESTIVER ABERTO
+                def aplicar_mascara(row):
+                    fechamento = map_fechamento.get(row['id_jogo'])
+                    if fechamento and agora < fechamento:
+                        return "🔒 Oculto"
+                    return row['palpite']
+                
+                df_completo['palpite_visivel'] = df_completo.apply(aplicar_mascara, axis=1)
+                
+                tabela = df_completo.pivot_table(index="nome_amigo", columns="Partida", values="palpite_visivel", aggfunc='first')
                 st.dataframe(tabela, use_container_width=True)
             else:
                 st.info("Ninguém palpitou nessa rodada ainda.")
@@ -178,7 +211,7 @@ else:
             st.info("Sem dados para exibir.")
 
     # ------------------------------------------
-    # 3. CLASSIFICAÇÃO
+    # 4. CLASSIFICAÇÃO
     # ------------------------------------------
     elif menu == "Classificação":
         st.subheader("Tabela de Pontos")
@@ -205,7 +238,7 @@ else:
             st.dataframe(df_ranking, use_container_width=True)
 
     # ------------------------------------------
-    # 4. ADMIN
+    # 5. ADMIN (CÁLCULO AUTOMÁTICO DE -1h59m)
     # ------------------------------------------
     elif menu == "⚙️ Admin":
         st.subheader("1. Cadastrar Novo Jogo")
@@ -216,11 +249,15 @@ else:
             fora = col3.text_input("Time Visitante")
             
             col4, col5 = st.columns(2)
-            data_fechamento = col4.date_input("Data Limite (Fechamento)")
-            hora_fechamento = col5.time_input("Hora Limite", value=time(16, 0))
+            data_jogo = col4.date_input("Data do Jogo")
+            hora_jogo = col5.time_input("Hora do Jogo", value=time(16, 0)) # Pede a hora real do jogo agora
             
             if st.form_submit_button("Cadastrar Partida"):
-                dt_fechamento = fuso_br.localize(datetime.combine(data_fechamento, hora_fechamento))
+                # Junta a data e hora do jogo e centraliza no fuso do Brasil
+                dt_jogo = fuso_br.localize(datetime.combine(data_jogo, hora_jogo))
+                
+                # Subtrai 1 hora e 59 minutos automaticamente para criar o fechamento
+                dt_fechamento = dt_jogo - timedelta(hours=1, minutes=59)
                 
                 supabase.table("jogos").insert({
                     "rodada": rod, 
@@ -228,7 +265,8 @@ else:
                     "time_fora": fora,
                     "horario_fechamento": dt_fechamento.isoformat()
                 }).execute()
-                st.success(f"Jogo adicionado! Fechamento: {dt_fechamento.strftime('%d/%m %H:%M')}")
+                
+                st.success(f"Jogo adicionado! Limite para palpites ficou para: {dt_fechamento.strftime('%d/%m %H:%M')}")
         
         st.divider()
         

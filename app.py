@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime, time, timedelta  # <--- Adicionamos o timedelta aqui
+from datetime import datetime, time, timedelta
 import pytz
 
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
@@ -15,6 +15,14 @@ def init_connection():
 
 supabase = init_connection()
 fuso_br = pytz.timezone('America/Sao_Paulo')
+
+# --- FUNÇÃO PARA CONVERTER O HORÁRIO DO BANCO PARA BRASÍLIA ---
+def converter_para_br(data_string):
+    # O Supabase as vezes retorna com um 'Z' no final indicando UTC. 
+    # Isso garante que o Python entenda e converta certinho para o fuso do Brasil.
+    if data_string.endswith('Z'):
+        data_string = data_string[:-1] + '+00:00'
+    return datetime.fromisoformat(data_string).astimezone(fuso_br)
 
 # --- CONTROLE DE SESSÃO ---
 if "logado" not in st.session_state:
@@ -85,7 +93,6 @@ else:
             
     st.divider()
 
-    # --- MENU ATUALIZADO ---
     opcoes_menu = ["Fazer Palpites", "Meus Palpites", "Ver Palpites da Galera", "Classificação"]
     if st.session_state.is_admin:
         opcoes_menu.append("⚙️ Admin")
@@ -114,7 +121,8 @@ else:
                     st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
                     
                     if jogo.get('horario_fechamento'):
-                        fechamento = datetime.fromisoformat(jogo['horario_fechamento'])
+                        # Aqui usamos a função nova para puxar o horário no fuso do Brasil!
+                        fechamento = converter_para_br(jogo['horario_fechamento'])
                         
                         if agora < fechamento:
                             st.caption(f"⏳ Fecha em: {fechamento.strftime('%d/%m às %H:%M')}")
@@ -145,7 +153,7 @@ else:
                     st.success("Palpites salvos com sucesso!")
 
     # ------------------------------------------
-    # 2. MEUS PALPITES (NOVA ABA)
+    # 2. MEUS PALPITES 
     # ------------------------------------------
     elif menu == "Meus Palpites":
         st.subheader("Meus Palpites")
@@ -170,7 +178,7 @@ else:
             st.info("Você ainda não fez nenhum palpite.")
 
     # ------------------------------------------
-    # 3. VER PALPITES DA GALERA (COM MÁSCARA)
+    # 3. VER PALPITES DA GALERA 
     # ------------------------------------------
     elif menu == "Ver Palpites da Galera":
         st.subheader("Quem apostou no que?")
@@ -184,8 +192,8 @@ else:
             df_jogos = pd.DataFrame(jogos)
             df_palpites = pd.DataFrame(palpites)
             
-            # Cria um dicionário com o horário de fechamento de cada jogo
-            map_fechamento = {j['id']: datetime.fromisoformat(j['horario_fechamento']) for j in jogos if j.get('horario_fechamento')}
+            # Atualizado para usar a conversão de horário do Brasil
+            map_fechamento = {j['id']: converter_para_br(j['horario_fechamento']) for j in jogos if j.get('horario_fechamento')}
             
             ids_jogos_rodada = df_jogos['id'].tolist()
             df_palpites_rodada = df_palpites[df_palpites['id_jogo'].isin(ids_jogos_rodada)]
@@ -194,7 +202,6 @@ else:
                 df_completo = pd.merge(df_palpites_rodada, df_jogos, left_on="id_jogo", right_on="id")
                 df_completo["Partida"] = df_completo["time_casa"] + " x " + df_completo["time_fora"]
                 
-                # FUNÇÃO PARA OCULTAR O PALPITE SE O JOGO AINDA ESTIVER ABERTO
                 def aplicar_mascara(row):
                     fechamento = map_fechamento.get(row['id_jogo'])
                     if fechamento and agora < fechamento:
@@ -238,7 +245,7 @@ else:
             st.dataframe(df_ranking, use_container_width=True)
 
     # ------------------------------------------
-    # 5. ADMIN (CÁLCULO AUTOMÁTICO DE -1h59m)
+    # 5. ADMIN
     # ------------------------------------------
     elif menu == "⚙️ Admin":
         st.subheader("1. Cadastrar Novo Jogo")
@@ -250,13 +257,10 @@ else:
             
             col4, col5 = st.columns(2)
             data_jogo = col4.date_input("Data do Jogo")
-            hora_jogo = col5.time_input("Hora do Jogo", value=time(16, 0)) # Pede a hora real do jogo agora
+            hora_jogo = col5.time_input("Hora do Jogo", value=time(16, 0)) 
             
             if st.form_submit_button("Cadastrar Partida"):
-                # Junta a data e hora do jogo e centraliza no fuso do Brasil
                 dt_jogo = fuso_br.localize(datetime.combine(data_jogo, hora_jogo))
-                
-                # Subtrai 1 hora e 59 minutos automaticamente para criar o fechamento
                 dt_fechamento = dt_jogo - timedelta(hours=1, minutes=59)
                 
                 supabase.table("jogos").insert({

@@ -67,12 +67,10 @@ if not st.session_state.logado:
     st.title("🔒 Acesso ao Bolão")
     st.write("Identifique-se para aceder aos palpites.")
     
-    # NOVIDADE: E-mail e Senha juntos no mesmo formulário para ativar o "Salvar Senha" do navegador
     with st.form("form_login_unificado"):
         email_digitado = st.text_input("E-mail", autocomplete="username")
         senha_digitada = st.text_input("Palavra-passe", type="password", autocomplete="current-password")
         
-        # Este botão serve tanto para entrar quanto para registrar a primeira senha
         submit = st.form_submit_button("Entrar", use_container_width=True)
         
         if submit:
@@ -83,13 +81,11 @@ if not st.session_state.logado:
                 if len(resposta.data) > 0:
                     usuario = resposta.data[0]
                     
-                    # --- PRIMEIRO ACESSO (Cria a senha automaticamente) ---
+                    # --- PRIMEIRO ACESSO ---
                     if not usuario.get("senha"):
-                        # Guarda a senha na base de dados
                         supabase.table("usuarios").update({"senha": senha_digitada}).eq("email", email_limpo).execute()
                         st.success("Primeiro acesso detetado! Palavra-passe registada.")
                         
-                        # Salva a sessão e entra
                         st.query_params["sessao"] = codificar_sessao(email_limpo)
                         st.session_state.logado = True
                         st.session_state.nome_usuario = usuario['nome']
@@ -97,10 +93,9 @@ if not st.session_state.logado:
                         st.session_state.is_admin = usuario.get('is_admin', False)
                         st.rerun()
                         
-                    # --- ACESSO NORMAL (Verifica a senha) ---
+                    # --- ACESSO NORMAL ---
                     else:
                         if senha_digitada == usuario["senha"]:
-                            # Salva a sessão na URL
                             st.query_params["sessao"] = codificar_sessao(email_limpo)
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
@@ -151,10 +146,10 @@ else:
         st.rerun()
 
     # ------------------------------------------
-    # 1. FAZER PALPITES
+    # 1. FAZER PALPITES E EDITAR
     # ------------------------------------------
     if menu == "Fazer Palpites":
-        st.subheader(f"Deixe os seus palpites (Rodada {rodada_ativa_atual})")
+        st.subheader(f"Faça ou edite os seus palpites (Rodada {rodada_ativa_atual})")
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada_ativa_atual).execute().data
         
         if not jogos:
@@ -162,51 +157,80 @@ else:
         else:
             agora = datetime.now(fuso_br)
             ids_jogos_rodada = [j['id'] for j in jogos]
-            palpites_existentes = supabase.table("palpites").select("id_jogo").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
-            ids_ja_palpitados = [p['id_jogo'] for p in palpites_existentes]
             
-            jogos_pendentes = []
+            # Puxa os palpites que o utilizador já fez para preencher os campos
+            palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
+            mapa_ja_palpitou = {p['id_jogo']: p['palpite'] for p in palpites_existentes}
+            
+            jogos_abertos = []
+            
+            # Filtra apenas os jogos que AINDA NÃO fecharam
             for jogo in jogos:
-                if jogo['id'] in ids_ja_palpitados:
-                    continue 
-                
                 if jogo.get('horario_fechamento'):
                     fechamento = converter_para_br(jogo['horario_fechamento'])
-                    if agora >= fechamento:
+                    if agora >= fechamento: # Se já passou dos 30 minutos antes do jogo, esconde da edição
                         continue 
                 
-                jogos_pendentes.append(jogo)
+                jogos_abertos.append(jogo)
 
-            if not jogos_pendentes:
-                st.success("🎉 Você não tem palpites pendentes para esta rodada! (Todos os jogos foram votados ou já fecharam).")
+            if not jogos_abertos:
+                st.success("🎉 Todos os jogos desta rodada já estão fechados (menos de 30 min para o início). Já não é possível editar palpites!")
             else:
                 with st.form("form_palpites"):
                     palpites_feitos = {}
                     
-                    for jogo in jogos_pendentes:
+                    for jogo in jogos_abertos:
                         st.write(f"⚽ **{jogo['time_casa']} x {jogo['time_fora']}**")
                         
                         opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
                         fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                         
                         if fechamento:
-                            st.caption(f"⏳ Fecha em: {fechamento.strftime('%d/%m às %H:%M')}")
+                            st.caption(f"⏳ Fecha para palpites em: {fechamento.strftime('%d/%m às %H:%M')}")
                             
-                        escolha = st.selectbox("Vencedor:", opcoes, index=1, key=f"jogo_{jogo['id']}")
+                        # Lógica para pré-selecionar o palpite antigo, se existir
+                        palpite_atual = mapa_ja_palpitou.get(jogo['id'])
+                        idx_atual = opcoes.index(palpite_atual) if palpite_atual in opcoes else 1
+                            
+                        escolha = st.selectbox("Vencedor:", opcoes, index=idx_atual, key=f"jogo_{jogo['id']}")
                         palpites_feitos[jogo['id']] = escolha
                         
                         st.write("---")
                     
-                    enviar = st.form_submit_button("Guardar Novos Palpites", use_container_width=True)
+                    enviar = st.form_submit_button("Guardar Palpites", use_container_width=True)
+                    
                     if enviar:
-                        for id_jogo, palpite in palpites_feitos.items():
-                            supabase.table("palpites").upsert({
-                                "nome_amigo": st.session_state.nome_usuario,
-                                "id_jogo": id_jogo,
-                                "palpite": palpite
-                            }).execute()
-                        st.success("Palpites guardados com sucesso!")
-                        st.rerun()
+                        agora_submit = datetime.now(fuso_br)
+                        salvou_algum = False
+                        
+                        for id_jogo, novo_palpite in palpites_feitos.items():
+                            # Trava de Segurança: Verifica a hora no exato momento do clique
+                            jogo_info = next(j for j in jogos_abertos if j['id'] == id_jogo)
+                            fechamento_seguro = converter_para_br(jogo_info['horario_fechamento']) if jogo_info.get('horario_fechamento') else None
+                            
+                            if fechamento_seguro and agora_submit >= fechamento_seguro:
+                                st.error(f"⚠️ O tempo para o jogo {jogo_info['time_casa']} x {jogo_info['time_fora']} acabou enquanto preenchia! O palpite não foi aceite.")
+                                continue
+                                
+                            # Se o palpite mudou ou é um palpite novo
+                            if mapa_ja_palpitou.get(id_jogo) != novo_palpite:
+                                if id_jogo in mapa_ja_palpitou:
+                                    # Edição segura (evita duplicados no Supabase)
+                                    supabase.table("palpites").update({"palpite": novo_palpite}).eq("nome_amigo", st.session_state.nome_usuario).eq("id_jogo", id_jogo).execute()
+                                else:
+                                    # Inserção nova
+                                    supabase.table("palpites").insert({
+                                        "nome_amigo": st.session_state.nome_usuario,
+                                        "id_jogo": id_jogo,
+                                        "palpite": novo_palpite
+                                    }).execute()
+                                salvou_algum = True
+                                
+                        if salvou_algum:
+                            st.success("Palpites guardados/atualizados com sucesso!")
+                            st.rerun()
+                        else:
+                            st.info("Nenhuma alteração detetada nos palpites.")
 
     # ------------------------------------------
     # 2. CLASSIFICAÇÃO GERAL
@@ -267,7 +291,7 @@ else:
                 if palpite_feito:
                     palpite_mostrar = palpite_feito
                 else:
-                    palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente (Ainda pode votar)"
+                    palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente (Ainda pode votar/editar)"
                         
                 dados_view.append({
                     "Partida": partida,
@@ -347,6 +371,7 @@ else:
         usuarios = supabase.table("usuarios").select("nome").execute().data
         
         nomes_usuarios = [u['nome'] for u in usuarios]
+        total_usuarios = len(nomes_usuarios)
         agora = datetime.now(fuso_br)
         
         if jogos:
@@ -356,15 +381,22 @@ else:
             for jogo in jogos:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
-                jogo_fechado = fechamento and agora >= fechamento
+                passou_do_tempo = fechamento and agora >= fechamento
+                
+                # Conta quantos utilizadores já deixaram o palpite NESTE jogo específico
+                votos_neste_jogo = sum(1 for nome in nomes_usuarios if (jogo['id'], nome) in mapa_palpites)
+                todos_votaram = (votos_neste_jogo == total_usuarios)
+                
+                # Jogo é liberado se passou do tempo OU se todos já votaram
+                jogo_liberado = passou_do_tempo or todos_votaram
                 
                 for nome in nomes_usuarios:
                     palpite_real = mapa_palpites.get((jogo['id'], nome))
                     
                     if palpite_real:
-                        palpite_visivel = palpite_real if jogo_fechado else "🔒 Oculto"
+                        palpite_visivel = palpite_real if jogo_liberado else "🔒 Oculto"
                     else:
-                        palpite_visivel = "Empate (Auto)" if jogo_fechado else "Pendente"
+                        palpite_visivel = "Empate (Auto)" if passou_do_tempo else "Pendente"
                         
                     dados_tabela.append({"Nome": nome, "Partida": partida, "Palpite": palpite_visivel})
                     
@@ -400,7 +432,9 @@ else:
             
             if st.form_submit_button("Registar Partida", use_container_width=True):
                 dt_jogo = fuso_br.localize(datetime.combine(data_jogo, hora_jogo))
-                dt_fechamento = dt_jogo - timedelta(hours=1, minutes=59)
+                
+                # O limite agora é gravado como EXATAMENTE 30 minutos antes do jogo
+                dt_fechamento = dt_jogo - timedelta(minutes=30)
                 
                 supabase.table("jogos").insert({
                     "rodada": rod, 
@@ -409,22 +443,40 @@ else:
                     "horario_fechamento": dt_fechamento.isoformat()
                 }).execute()
                 
-                st.success(f"Jogo registado! Limite de votação: {dt_fechamento.strftime('%d/%m %H:%M')}")
+                st.success(f"Jogo registado! Limite de votação e edição: {dt_fechamento.strftime('%d/%m %H:%M')}")
         
         st.divider()
         
-        st.subheader("3. Lançar Resultado Final")
+        st.subheader("3. Lançar / Editar Resultado Final")
         rod_resultado = st.number_input("Filtrar por Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_res")
-        jogos_pendentes = supabase.table("jogos").select("*").eq("rodada", rod_resultado).is_("resultado_real", "null").execute().data
         
-        if jogos_pendentes:
-            for jogo in jogos_pendentes:
-                st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
-                vencedor = st.selectbox("Quem ganhou?", [jogo['time_casa'], "Empate", jogo['time_fora']], key=f"res_{jogo['id']}")
-                if st.button("Guardar Resultado", key=f"btn_{jogo['id']}", use_container_width=True):
+        jogos_rodada = supabase.table("jogos").select("*").eq("rodada", rod_resultado).execute().data
+        
+        if jogos_rodada:
+            for jogo in jogos_rodada:
+                res_atual = jogo.get("resultado_real")
+                opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
+                
+                if res_atual:
+                    st.success(f"✅ **{jogo['time_casa']} x {jogo['time_fora']}**")
+                    st.caption(f"Status: Resultado já lançado (**{res_atual}**)")
+                    
+                    idx_atual = opcoes.index(res_atual) if res_atual in opcoes else 1
+                    vencedor = st.selectbox("Alterar resultado para:", opcoes, index=idx_atual, key=f"res_{jogo['id']}")
+                    texto_botao = "✏️ Editar Resultado"
+                    
+                else:
+                    st.info(f"⏳ **{jogo['time_casa']} x {jogo['time_fora']}**")
+                    st.caption("Status: A aguardar resultado oficial")
+                    
+                    vencedor = st.selectbox("Quem ganhou?", opcoes, index=1, key=f"res_{jogo['id']}")
+                    texto_botao = "💾 Guardar Resultado"
+                
+                if st.button(texto_botao, key=f"btn_{jogo['id']}", use_container_width=True):
                     supabase.table("jogos").update({"resultado_real": vencedor}).eq("id", jogo["id"]).execute()
-                    st.success("Resultado atualizado e classificação recalculada!")
+                    st.success("Resultado guardado e classificação recalculada com sucesso!")
                     st.rerun()
+                    
                 st.write("---")
         else:
-            st.write("Sem jogos a aguardar resultado nesta rodada.")
+            st.write("Nenhum jogo registado para esta rodada.")

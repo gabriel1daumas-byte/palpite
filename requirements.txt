@@ -2,4 +2,3 @@ streamlit
 supabase
 pandas
 pytz
-streamlit-cookies-controller

@@ -3,7 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime, time, timedelta
 import pytz
-from streamlit_cookies_controller import CookieController
+import base64
 
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
@@ -29,30 +29,36 @@ def get_rodada_ativa():
             return res.data[0]['rodada_ativa']
     except:
         pass
-    return 1  # Fallback caso a tabela ainda não exista
+    return 1
 
-# --- INICIALIZA O GESTOR DE COOKIES ---
-controller = CookieController()
+# --- FUNÇÕES PARA PROTEGER A SESSÃO NA URL ---
+def codificar_sessao(email):
+    return base64.b64encode(email.encode()).decode()
 
-# --- CONTROLO DE SESSÃO AUTOMÁTICO ---
+def decodificar_sessao(codigo):
+    try:
+        return base64.b64decode(codigo.encode()).decode()
+    except:
+        return None
+
+# --- CONTROLO DE SESSÃO À PROVA DE F5 ---
 if "logado" not in st.session_state:
     st.session_state.logado = False
     st.session_state.nome_usuario = ""
     st.session_state.email_usuario = ""
     st.session_state.is_admin = False
 
-# Lê o cookie de forma segura (evita o problema do 1º frame)
-cookie_email = controller.get('bolao_email')
-
-# Se não estiver logado na sessão atual, mas o cookie existir, faz auto-login
-if not st.session_state.logado and cookie_email:
-    res = supabase.table("usuarios").select("*").eq("email", cookie_email).execute()
-    if res.data:
-        usuario = res.data[0]
-        st.session_state.logado = True
-        st.session_state.nome_usuario = usuario['nome']
-        st.session_state.email_usuario = usuario['email']
-        st.session_state.is_admin = usuario.get('is_admin', False)
+# Lê a URL imediatamente após o F5
+if "sessao" in st.query_params and not st.session_state.logado:
+    email_decodificado = decodificar_sessao(st.query_params["sessao"])
+    if email_decodificado:
+        res = supabase.table("usuarios").select("*").eq("email", email_decodificado).execute()
+        if res.data:
+            usuario = res.data[0]
+            st.session_state.logado = True
+            st.session_state.nome_usuario = usuario['nome']
+            st.session_state.email_usuario = usuario['email']
+            st.session_state.is_admin = usuario.get('is_admin', False)
 
 # ==========================================
 # ECRÃ DE ACESSO (LOGIN)
@@ -61,7 +67,8 @@ if not st.session_state.logado:
     st.title("🔒 Acesso ao Bolão")
     st.write("Identifique-se para aceder aos palpites.")
     
-    email_digitado = st.text_input("Qual o seu e-mail?")
+    # NOVIDADE: Ajuda o navegador a preencher o e-mail
+    email_digitado = st.text_input("Qual o seu e-mail?", autocomplete="username")
     
     if email_digitado:
         email_limpo = email_digitado.lower().strip()
@@ -74,13 +81,14 @@ if not st.session_state.logado:
             if not usuario.get("senha"):
                 st.info(f"Olá, **{usuario['nome']}**! Este é o seu primeiro acesso. Crie uma palavra-passe para continuar.")
                 with st.form("form_primeiro_acesso"):
-                    nova_senha = st.text_input("Crie a sua palavra-passe:", type="password")
+                    # NOVIDADE: Permite ao gestor de senhas sugerir uma nova senha forte
+                    nova_senha = st.text_input("Crie a sua palavra-passe:", type="password", autocomplete="new-password")
                     if st.form_submit_button("Guardar e Entrar"):
                         if nova_senha:
                             supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email_limpo).execute()
                             
-                            # Guarda o Cookie por 30 dias (2.592.000 segundos)
-                            controller.set('bolao_email', email_limpo, max_age=2592000)
+                            # Salva a sessão na URL
+                            st.query_params["sessao"] = codificar_sessao(email_limpo)
                             
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
@@ -93,15 +101,14 @@ if not st.session_state.logado:
             # --- ACESSO NORMAL ---
             else:
                 with st.form("form_login"):
-                    senha_digitada = st.text_input("A sua palavra-passe:", type="password")
-                    lembrar_me = st.checkbox("Manter sessão iniciada neste dispositivo", value=True)
+                    # NOVIDADE: Força o navegador a mostrar o FaceID/Auto-preenchimento
+                    senha_digitada = st.text_input("A sua palavra-passe:", type="password", autocomplete="current-password")
                     
                     if st.form_submit_button("Entrar", use_container_width=True):
                         if senha_digitada == usuario["senha"]:
-                            if lembrar_me:
-                                # Guarda o Cookie por 30 dias
-                                controller.set('bolao_email', email_limpo, max_age=2592000)
-                                
+                            # Salva a sessão na URL para resistir ao F5
+                            st.query_params["sessao"] = codificar_sessao(email_limpo)
+                            
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
                             st.session_state.email_usuario = email_limpo
@@ -122,7 +129,7 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
-    # NOVIDADE: Ordem dos menus atualizada
+    # NOVIDADE: Nova ordem de menus
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -139,7 +146,10 @@ else:
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
-        controller.remove('bolao_email')
+        # Limpa o "crachá" da URL ao sair
+        if "sessao" in st.query_params:
+            del st.query_params["sessao"]
+            
         st.session_state.logado = False
         st.session_state.is_admin = False
         st.session_state.nome_usuario = ""
@@ -231,7 +241,6 @@ else:
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
             df_geral = df_completo.groupby('nome')['pontos'].sum().reset_index()
-            # Ordenação: Pontos (decrescente), depois Nome (alfabético crescente)
             df_geral = df_geral.sort_values(by=['pontos', 'nome'], ascending=[False, True]).reset_index(drop=True)
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos"]
@@ -306,7 +315,6 @@ else:
             df_pivot.columns = [f"Rodada {col}" for col in df_pivot.columns]
             
             df_pivot['Total'] = df_pivot.sum(axis=1)
-            # Ordenação com desempate alfabético
             df_pivot = df_pivot.sort_values(by=['Total', 'nome'], ascending=[False, True])
             
             st.dataframe(df_pivot, use_container_width=True, height=450)

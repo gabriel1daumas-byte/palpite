@@ -35,7 +35,6 @@ if not st.session_state.logado:
     st.title("🔒 Acesso ao Bolão")
     st.write("Identifique-se para aceder aos palpites.")
     
-    # Busca e-mail primeiro para saber qual formulário mostrar
     email_digitado = st.text_input("Qual o seu e-mail?")
     
     if email_digitado:
@@ -45,7 +44,7 @@ if not st.session_state.logado:
         if len(resposta.data) > 0:
             usuario = resposta.data[0]
             
-            # --- PRIMEIRO ACESSO (CRIAR SENHA) ---
+            # --- PRIMEIRO ACESSO ---
             if not usuario.get("senha"):
                 st.info(f"Olá, **{usuario['nome']}**! Este é o seu primeiro acesso. Crie uma palavra-passe para continuar.")
                 with st.form("form_primeiro_acesso"):
@@ -62,7 +61,7 @@ if not st.session_state.logado:
                         else:
                             st.warning("A palavra-passe não pode estar vazia.")
                             
-            # --- ACESSO NORMAL (JÁ TEM SENHA) ---
+            # --- ACESSO NORMAL ---
             else:
                 with st.form("form_login"):
                     senha_digitada = st.text_input("A sua palavra-passe:", type="password")
@@ -82,19 +81,13 @@ if not st.session_state.logado:
 # SISTEMA PRINCIPAL
 # ==========================================
 else:
-    col1, col2 = st.columns([8, 1])
-    with col1:
-        st.title("🏆 Bolão da Galera")
-        st.write(f"Olá, **{st.session_state.nome_usuario}**!")
-    with col2:
-        if st.button("Sair", use_container_width=True):
-            st.session_state.logado = False
-            st.session_state.is_admin = False
-            st.rerun()
+    # MOBILE FIX: Removidas as colunas para o Título/Sair. O botão Sair foi para a barra lateral.
+    st.title("🏆 Bolão da Galera")
+    st.write(f"Olá, **{st.session_state.nome_usuario}**!")
             
     st.divider()
 
-    # Nova ordem do menu: Classificação vem primeiro
+    # Opções do menu
     opcoes_menu = [
         "Classificação", 
         "Total por Rodada", 
@@ -108,6 +101,13 @@ else:
         opcoes_menu.append("⚙️ Admin")
         
     menu = st.sidebar.selectbox("Navegação", opcoes_menu)
+    
+    # MOBILE FIX: Botão de Sair na Sidebar
+    st.sidebar.divider()
+    if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
+        st.session_state.logado = False
+        st.session_state.is_admin = False
+        st.rerun()
 
     # ------------------------------------------
     # 1. CLASSIFICAÇÃO GERAL
@@ -126,27 +126,22 @@ else:
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            # Cross Join e Merge
             df_cross = df_usuarios.merge(df_jogos, how='cross')
             df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
             
-            # Regra do Empate
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
-            
-            # Limpeza de texto
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
             
-            # Pontuação
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
-            # Ranking
             df_geral = df_completo.groupby('nome')['pontos'].sum().reset_index()
             df_geral = df_geral.sort_values(by='pontos', ascending=False).reset_index(drop=True)
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos"]
             
             st.dataframe(df_geral, use_container_width=True, height=450)
+
     # ------------------------------------------
     # 2. TOTAL POR RODADA
     # ------------------------------------------
@@ -164,24 +159,18 @@ else:
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            # Cross Join e Merge
             df_cross = df_usuarios.merge(df_jogos, how='cross')
             df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
             
-            # Regra do Empate
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
-            
-            # Limpeza
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
-            # Agrupamento e Pivot
             df_agrupado = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
             df_pivot = df_agrupado.pivot(index='nome', columns='rodada', values='pontos').fillna(0).astype(int)
             df_pivot.columns = [f"Rodada {col}" for col in df_pivot.columns]
             
-            # Adiciona Total
             df_pivot['Total'] = df_pivot.sum(axis=1)
             df_pivot = df_pivot.sort_values(by='Total', ascending=False)
             
@@ -202,15 +191,8 @@ else:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
                 res_real = jogo.get("resultado_real")
                 
-                if res_real:
-                    status = res_real
-                else:
-                    status = "⏳ A aguardar resultado"
-                    
-                dados_view.append({
-                    "Partida": partida,
-                    "Vencedor Oficial": status
-                })
+                status = res_real if res_real else "⏳ A aguardar resultado"
+                dados_view.append({"Partida": partida, "Vencedor Oficial": status})
                 
             st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
         else:
@@ -238,32 +220,34 @@ else:
                 jogos_abertos = 0
                 
                 for jogo in jogos:
-                    st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
+                    st.write(f"⚽ **{jogo['time_casa']} x {jogo['time_fora']}**")
                     
                     if jogo['id'] in mapa_ja_palpitou:
                         st.success(f"✅ Palpite bloqueado: **{mapa_ja_palpitou[jogo['id']]}**")
                     else:
+                        opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
+                        
                         if jogo.get('horario_fechamento'):
                             fechamento = converter_para_br(jogo['horario_fechamento'])
                             
                             if agora < fechamento:
                                 st.caption(f"⏳ Fecha em: {fechamento.strftime('%d/%m às %H:%M')}")
-                                opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
-                                escolha = st.radio("Vencedor:", opcoes, horizontal=True, index=1, key=f"jogo_{jogo['id']}")
+                                # MOBILE FIX: st.selectbox no lugar de st.radio para economizar espaço horizontal
+                                escolha = st.selectbox("Vencedor:", opcoes, index=1, key=f"jogo_{jogo['id']}")
                                 palpites_feitos[jogo['id']] = escolha
                                 jogos_abertos += 1
                             else:
                                 st.error(f"🔒 Encerrado (Foi assumido 'Empate' automaticamente)")
                         else:
-                            opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
-                            escolha = st.radio("Vencedor:", opcoes, horizontal=True, index=1, key=f"jogo_{jogo['id']}")
+                            # MOBILE FIX: st.selectbox
+                            escolha = st.selectbox("Vencedor:", opcoes, index=1, key=f"jogo_{jogo['id']}")
                             palpites_feitos[jogo['id']] = escolha
                             jogos_abertos += 1
                     
                     st.write("---")
                 
                 if jogos_abertos > 0:
-                    enviar = st.form_submit_button("Guardar Novos Palpites")
+                    enviar = st.form_submit_button("Guardar Novos Palpites", use_container_width=True)
                     if enviar:
                         for id_jogo, palpite in palpites_feitos.items():
                             supabase.table("palpites").upsert({
@@ -274,7 +258,7 @@ else:
                         st.success("Palpites guardados com sucesso!")
                         st.rerun()
                 else:
-                    st.form_submit_button("Todos os jogos bloqueados ou já preenchidos", disabled=True)
+                    st.form_submit_button("Todos os jogos bloqueados ou já preenchidos", disabled=True, use_container_width=True)
 
     # ------------------------------------------
     # 5. MEUS PALPITES 
@@ -297,16 +281,12 @@ else:
                 
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                 jogo_fechado = fechamento and agora >= fechamento
-                
                 palpite_feito = mapa_meus.get(jogo['id'])
                 
                 if palpite_feito:
                     palpite_mostrar = palpite_feito
                 else:
-                    if jogo_fechado:
-                        palpite_mostrar = "Empate (Auto)"
-                    else:
-                        palpite_mostrar = "Pendente (Ainda pode votar)"
+                    palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente (Ainda pode votar)"
                         
                 dados_view.append({
                     "Partida": partida,
@@ -349,11 +329,7 @@ else:
                     else:
                         palpite_visivel = "Empate (Auto)" if jogo_fechado else "Pendente"
                         
-                    dados_tabela.append({
-                        "Nome": nome,
-                        "Partida": partida,
-                        "Palpite": palpite_visivel
-                    })
+                    dados_tabela.append({"Nome": nome, "Partida": partida, "Palpite": palpite_visivel})
                     
             df_completo = pd.DataFrame(dados_tabela)
             tabela = df_completo.pivot_table(index="Nome", columns="Partida", values="Palpite", aggfunc='first')
@@ -367,16 +343,18 @@ else:
     elif menu == "⚙️ Admin":
         st.subheader("1. Registar Novo Jogo")
         with st.form("novo_jogo"):
-            col1, col2, col3 = st.columns([1, 2, 2])
+            # MOBILE FIX: O Streamlit lida bem com colunas no celular empilhando-as automaticamente,
+            # mas simplificamos a inserção.
+            col1, col2, col3 = st.columns(3)
             rod = col1.number_input("Rodada", min_value=1, step=1)
-            casa = col2.text_input("Equipa Visitada")
-            fora = col3.text_input("Equipa Visitante")
+            casa = col2.text_input("Visitada")
+            fora = col3.text_input("Visitante")
             
             col4, col5 = st.columns(2)
             data_jogo = col4.date_input("Data do Jogo")
             hora_jogo = col5.time_input("Hora do Jogo", value=time(16, 0)) 
             
-            if st.form_submit_button("Registar Partida"):
+            if st.form_submit_button("Registar Partida", use_container_width=True):
                 dt_jogo = fuso_br.localize(datetime.combine(data_jogo, hora_jogo))
                 dt_fechamento = dt_jogo - timedelta(hours=1, minutes=59)
                 
@@ -399,9 +377,10 @@ else:
             for jogo in jogos_pendentes:
                 st.write(f"**{jogo['time_casa']} x {jogo['time_fora']}**")
                 vencedor = st.selectbox("Quem ganhou?", [jogo['time_casa'], "Empate", jogo['time_fora']], key=f"res_{jogo['id']}")
-                if st.button("Guardar Resultado", key=f"btn_{jogo['id']}"):
+                if st.button("Guardar Resultado", key=f"btn_{jogo['id']}", use_container_width=True):
                     supabase.table("jogos").update({"resultado_real": vencedor}).eq("id", jogo["id"]).execute()
                     st.success("Resultado atualizado e classificação recalculada!")
                     st.rerun()
+                st.write("---")
         else:
             st.write("Sem jogos a aguardar resultado nesta rodada.")

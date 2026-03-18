@@ -8,6 +8,15 @@ import base64
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
 
+# NOVIDADE: Truque de CSS para forçar o Combo (Selectbox) a mostrar todos os itens sem scroll
+st.markdown("""
+    <style>
+    div[data-baseweb="popover"] ul {
+        max-height: 500px !important;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 @st.cache_resource
 def init_connection():
     url = st.secrets["SUPABASE_URL"]
@@ -116,7 +125,7 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
-    # NOVIDADE: Ordem exata solicitada
+    # Ordem exata solicitada
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -132,8 +141,8 @@ else:
     if st.session_state.is_admin:
         opcoes_menu.append("⚙️ Admin")
         
-    # NOVIDADE: Uso de radio button para mostrar o menu 100% aberto sem scroll
-    menu = st.sidebar.radio("Navegação", opcoes_menu)
+    # Voltou a ser Selectbox (Combo)
+    menu = st.sidebar.selectbox("Navegação", opcoes_menu)
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
@@ -268,7 +277,6 @@ else:
             df_geral = df_geral.merge(df_titulos, on='nome', how='left')
             df_geral['titulos'] = df_geral['titulos'].fillna(0).astype(int)
             
-            # Ordena por: 1º Pontos, 2º Quantidade de Títulos, 3º Ordem Alfabética (silencioso)
             df_geral = df_geral.sort_values(by=['pontos', 'titulos', 'nome'], ascending=[False, False, True]).reset_index(drop=True)
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos", "Títulos (Desempate)"]
@@ -314,7 +322,7 @@ else:
             st.info("Nenhum jogo nesta rodada.")
 
     # ------------------------------------------
-    # 4. CAMPEÕES DA RODADA
+    # 4. CAMPEÃO DA RODADA
     # ------------------------------------------
     elif menu == "Campeão da Rodada":
         st.subheader("👑 Campeões por Rodada")
@@ -510,17 +518,14 @@ else:
         st.subheader("⚖️ Regras e Critérios de Desempate")
         
         st.markdown("""
-        **🏆 Campeão da Rodada**
-        O Campeão da Rodada é aquele que obtiver a maior soma de pontos apenas nos jogos correspondentes àquela rodada específica.  
+        **🏆 Campeão da Rodada** O Campeão da Rodada é aquele que obtiver a maior soma de pontos apenas nos jogos correspondentes àquela rodada específica.  
         Se houver empate no número máximo de pontos, todos os empatados são considerados "Campeões" daquela rodada.
 
-        **🥇 Classificação Geral (Critérios de Desempate)**
-        Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:  
+        **🥇 Classificação Geral (Critérios de Desempate)** Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:  
         1. **Maior número de pontos gerais** (1 Ponto por cada vencedor acertado ou empate).  
         2. **Maior quantidade de campeões da rodada.**
 
-        **⏳ Limite de Palpites**
-        * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
+        **⏳ Limite de Palpites** * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
         * Após esse limite, o jogo é bloqueado. Se não tiver deixado palpite, o sistema assumirá "Empate" automaticamente.  
         * Assim que o jogo bloqueia (ou assim que todos os participantes votarem), os palpites ficam públicos para todos verem.
         """)

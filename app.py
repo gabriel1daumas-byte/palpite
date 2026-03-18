@@ -3,6 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime, time, timedelta
 import pytz
+import extra_streamlit_components as stx
 
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
@@ -21,7 +22,6 @@ def converter_para_br(data_string):
         data_string = data_string[:-1] + '+00:00'
     return datetime.fromisoformat(data_string).astimezone(fuso_br)
 
-# --- BUSCAR RODADA ATIVA ---
 def get_rodada_ativa():
     try:
         res = supabase.table("configuracoes").select("rodada_ativa").eq("id", 1).execute()
@@ -29,14 +29,32 @@ def get_rodada_ativa():
             return res.data[0]['rodada_ativa']
     except:
         pass
-    return 1  # Fallback caso a tabela ainda não exista
+    return 1
 
-# --- CONTROLO DE SESSÃO ---
+# --- GESTOR DE COOKIES ---
+# Inicializa o gestor de cookies (deve ficar no escopo principal)
+cookie_manager = stx.CookieManager()
+
+# --- CONTROLO DE SESSÃO AUTOMÁTICO ---
 if "logado" not in st.session_state:
-    st.session_state.logado = False
-    st.session_state.nome_usuario = ""
-    st.session_state.email_usuario = ""
-    st.session_state.is_admin = False
+    # Tenta ler o cookie para ver se o utilizador já estava logado
+    cookie_email = cookie_manager.get(cookie="bolao_email")
+    
+    if cookie_email:
+        res = supabase.table("usuarios").select("*").eq("email", cookie_email).execute()
+        if res.data:
+            usuario = res.data[0]
+            st.session_state.logado = True
+            st.session_state.nome_usuario = usuario['nome']
+            st.session_state.email_usuario = usuario['email']
+            st.session_state.is_admin = usuario.get('is_admin', False)
+        else:
+            st.session_state.logado = False
+    else:
+        st.session_state.logado = False
+        st.session_state.nome_usuario = ""
+        st.session_state.email_usuario = ""
+        st.session_state.is_admin = False
 
 # ==========================================
 # ECRÃ DE ACESSO (LOGIN)
@@ -61,7 +79,9 @@ if not st.session_state.logado:
                     if st.form_submit_button("Guardar e Entrar"):
                         if nova_senha:
                             supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email_limpo).execute()
-                            st.success("Palavra-passe registada com sucesso!")
+                            # Salva o login no Cookie por 30 dias
+                            cookie_manager.set("bolao_email", email_limpo, expires_at=datetime.now() + timedelta(days=30))
+                            
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
                             st.session_state.email_usuario = email_limpo
@@ -72,8 +92,13 @@ if not st.session_state.logado:
             else:
                 with st.form("form_login"):
                     senha_digitada = st.text_input("A sua palavra-passe:", type="password")
-                    if st.form_submit_button("Entrar"):
+                    lembrar_me = st.checkbox("Manter sessão iniciada neste dispositivo", value=True)
+                    
+                    if st.form_submit_button("Entrar", use_container_width=True):
                         if senha_digitada == usuario["senha"]:
+                            if lembrar_me:
+                                cookie_manager.set("bolao_email", email_limpo, expires_at=datetime.now() + timedelta(days=30))
+                                
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
                             st.session_state.email_usuario = email_limpo
@@ -110,6 +135,7 @@ else:
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
+        cookie_manager.delete("bolao_email")
         st.session_state.logado = False
         st.session_state.is_admin = False
         st.rerun()
@@ -141,7 +167,7 @@ else:
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
             df_geral = df_completo.groupby('nome')['pontos'].sum().reset_index()
-            # NOVIDADE: Ordenar por pontos (decrescente) e depois por nome (alfabético crescente)
+            # Ordenação: Pontos (decrescente), depois Nome (alfabético crescente)
             df_geral = df_geral.sort_values(by=['pontos', 'nome'], ascending=[False, True]).reset_index(drop=True)
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos"]
@@ -178,7 +204,6 @@ else:
             df_pivot.columns = [f"Rodada {col}" for col in df_pivot.columns]
             
             df_pivot['Total'] = df_pivot.sum(axis=1)
-            # NOVIDADE: Ordenação também com desempate alfabético
             df_pivot = df_pivot.sort_values(by=['Total', 'nome'], ascending=[False, True])
             
             st.dataframe(df_pivot, use_container_width=True, height=450)
@@ -206,11 +231,10 @@ else:
             st.info("Nenhum jogo registado para esta rodada.")
 
     # ------------------------------------------
-    # 4. FAZER PALPITES (APENAS PENDENTES E ATIVOS)
+    # 4. FAZER PALPITES
     # ------------------------------------------
     elif menu == "Fazer Palpites":
         st.subheader(f"Deixe os seus palpites (Rodada {rodada_ativa_atual})")
-        # NOVIDADE: Fixo na rodada ativa, sem precisar que o usuário escolha
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada_ativa_atual).execute().data
         
         if not jogos:
@@ -221,21 +245,20 @@ else:
             palpites_existentes = supabase.table("palpites").select("id_jogo").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
             ids_ja_palpitados = [p['id_jogo'] for p in palpites_existentes]
             
-            # NOVIDADE: Filtrar apenas os jogos que o utilizador NÃO palpitou e que NÃO estão fechados
             jogos_pendentes = []
             for jogo in jogos:
                 if jogo['id'] in ids_ja_palpitados:
-                    continue # Já votou
+                    continue 
                 
                 if jogo.get('horario_fechamento'):
                     fechamento = converter_para_br(jogo['horario_fechamento'])
                     if agora >= fechamento:
-                        continue # O tempo já passou (assume empate via BD depois)
+                        continue 
                 
                 jogos_pendentes.append(jogo)
 
             if not jogos_pendentes:
-                st.success("🎉 Você não tem palpites pendentes para esta rodada! (Todos os jogos foram votados ou já fecharam).")
+                st.success("🎉 Não tens palpites pendentes para esta rodada! (Todos os jogos foram votados ou já fecharam).")
             else:
                 with st.form("form_palpites"):
                     palpites_feitos = {}
@@ -346,7 +369,6 @@ else:
     # 7. ADMIN
     # ------------------------------------------
     elif menu == "⚙️ Admin":
-        # NOVIDADE: Seção para atualizar a Rodada Ativa
         st.subheader("1. Definir Rodada Ativa")
         nova_rodada_ativa = st.number_input("Qual a rodada atual do bolão?", min_value=1, step=1, value=rodada_ativa_atual)
         if st.button("Atualizar Rodada Ativa", use_container_width=True):

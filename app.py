@@ -61,54 +61,47 @@ if "sessao" in st.query_params and not st.session_state.logado:
             st.session_state.is_admin = usuario.get('is_admin', False)
 
 # ==========================================
-# ECRÃ DE ACESSO (LOGIN)
+# ECRÃ DE ACESSO (LOGIN UNIFICADO)
 # ==========================================
 if not st.session_state.logado:
     st.title("🔒 Acesso ao Bolão")
     st.write("Identifique-se para aceder aos palpites.")
     
-    # NOVIDADE: Ajuda o navegador a preencher o e-mail
-    email_digitado = st.text_input("Qual o seu e-mail?", autocomplete="username")
-    
-    if email_digitado:
-        email_limpo = email_digitado.lower().strip()
-        resposta = supabase.table("usuarios").select("*").eq("email", email_limpo).execute()
+    # NOVIDADE: E-mail e Senha juntos no mesmo formulário para ativar o "Salvar Senha" do navegador
+    with st.form("form_login_unificado"):
+        email_digitado = st.text_input("E-mail", autocomplete="username")
+        senha_digitada = st.text_input("Palavra-passe", type="password", autocomplete="current-password")
         
-        if len(resposta.data) > 0:
-            usuario = resposta.data[0]
-            
-            # --- PRIMEIRO ACESSO ---
-            if not usuario.get("senha"):
-                st.info(f"Olá, **{usuario['nome']}**! Este é o seu primeiro acesso. Crie uma palavra-passe para continuar.")
-                with st.form("form_primeiro_acesso"):
-                    # NOVIDADE: Permite ao gestor de senhas sugerir uma nova senha forte
-                    nova_senha = st.text_input("Crie a sua palavra-passe:", type="password", autocomplete="new-password")
-                    if st.form_submit_button("Guardar e Entrar"):
-                        if nova_senha:
-                            supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email_limpo).execute()
-                            
+        # Este botão serve tanto para entrar quanto para registrar a primeira senha
+        submit = st.form_submit_button("Entrar", use_container_width=True)
+        
+        if submit:
+            if email_digitado and senha_digitada:
+                email_limpo = email_digitado.lower().strip()
+                resposta = supabase.table("usuarios").select("*").eq("email", email_limpo).execute()
+                
+                if len(resposta.data) > 0:
+                    usuario = resposta.data[0]
+                    
+                    # --- PRIMEIRO ACESSO (Cria a senha automaticamente) ---
+                    if not usuario.get("senha"):
+                        # Guarda a senha na base de dados
+                        supabase.table("usuarios").update({"senha": senha_digitada}).eq("email", email_limpo).execute()
+                        st.success("Primeiro acesso detetado! Palavra-passe registada.")
+                        
+                        # Salva a sessão e entra
+                        st.query_params["sessao"] = codificar_sessao(email_limpo)
+                        st.session_state.logado = True
+                        st.session_state.nome_usuario = usuario['nome']
+                        st.session_state.email_usuario = email_limpo
+                        st.session_state.is_admin = usuario.get('is_admin', False)
+                        st.rerun()
+                        
+                    # --- ACESSO NORMAL (Verifica a senha) ---
+                    else:
+                        if senha_digitada == usuario["senha"]:
                             # Salva a sessão na URL
                             st.query_params["sessao"] = codificar_sessao(email_limpo)
-                            
-                            st.session_state.logado = True
-                            st.session_state.nome_usuario = usuario['nome']
-                            st.session_state.email_usuario = email_limpo
-                            st.session_state.is_admin = usuario.get('is_admin', False)
-                            st.rerun()
-                        else:
-                            st.warning("A palavra-passe não pode estar vazia.")
-            
-            # --- ACESSO NORMAL ---
-            else:
-                with st.form("form_login"):
-                    # NOVIDADE: Força o navegador a mostrar o FaceID/Auto-preenchimento
-                    senha_digitada = st.text_input("A sua palavra-passe:", type="password", autocomplete="current-password")
-                    
-                    if st.form_submit_button("Entrar", use_container_width=True):
-                        if senha_digitada == usuario["senha"]:
-                            # Salva a sessão na URL para resistir ao F5
-                            st.query_params["sessao"] = codificar_sessao(email_limpo)
-                            
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
                             st.session_state.email_usuario = email_limpo
@@ -116,8 +109,10 @@ if not st.session_state.logado:
                             st.rerun()
                         else:
                             st.error("Palavra-passe incorreta!")
-        else:
-            st.error("E-mail não encontrado ou não autorizado! Fale com o administrador.")
+                else:
+                    st.error("E-mail não encontrado! Fale com o administrador.")
+            else:
+                st.warning("Por favor, preencha o e-mail e a palavra-passe.")
 
 # ==========================================
 # SISTEMA PRINCIPAL
@@ -129,7 +124,7 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
-    # NOVIDADE: Nova ordem de menus
+    # Ordem dos menus
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -146,7 +141,6 @@ else:
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
-        # Limpa o "crachá" da URL ao sair
         if "sessao" in st.query_params:
             del st.query_params["sessao"]
             

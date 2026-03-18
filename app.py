@@ -8,7 +8,7 @@ import base64
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
 
-# Truque de CSS para forçar o Combo (Selectbox) a mostrar todos os itens sem scroll
+# Truque de CSS para forçar o Combo (Selectbox) da barra lateral a mostrar todos os itens sem scroll
 st.markdown("""
     <style>
     div[data-baseweb="popover"] ul {
@@ -125,7 +125,7 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
-    # Ordem exata solicitada
+    # Ordem exata solicitada pelo administrador
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -260,6 +260,7 @@ else:
             
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
+            # Lógica de desempate por títulos
             df_agrupado_rodada = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
             rodadas_com_jogos = df_jogos['rodada'].unique()
             df_rodadas_validas = df_agrupado_rodada[df_agrupado_rodada['rodada'].isin(rodadas_com_jogos)]
@@ -280,7 +281,6 @@ else:
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos", "Títulos (Desempate)"]
             
-            # NOVIDADE: st.table resolve o scroll de vez!
             st.table(df_geral)
 
     # ------------------------------------------
@@ -318,7 +318,6 @@ else:
                 })
                 
             df_view = pd.DataFrame(dados_view)
-            # NOVIDADE: st.table e transformando Partida no index para ficar limpo
             st.table(df_view.set_index("Partida"))
         else:
             st.info("Nenhum jogo nesta rodada.")
@@ -362,7 +361,6 @@ else:
                     st.write("🏆 **Ranking de Vitórias**")
                     ranking_vitorias = df_campeoes['nome'].value_counts().reset_index()
                     ranking_vitorias.columns = ["Participante", "Qtd. Rodadas Ganhas"]
-                    # NOVIDADE: Tabela desenrolada
                     st.table(ranking_vitorias.set_index("Participante"))
                 
                 with col2:
@@ -421,7 +419,6 @@ else:
             df_temp = df_temp.sort_values(by=['Total', 'titulos', 'nome'], ascending=[False, False, True])
             df_pivot = df_temp.drop(columns=['titulos']).set_index('nome')
             
-            # NOVIDADE: Tabela desenrolada
             st.table(df_pivot)
 
     # ------------------------------------------
@@ -512,7 +509,6 @@ else:
             df_pag = df_pag.rename(columns=colunas_map)
             df_pag = df_pag.sort_values(by="Participantes").reset_index(drop=True)
             
-            # Limpa o index (que era numérico) para focar apenas no Participante
             st.table(df_pag.set_index("Participantes"))
         else:
             st.info("Ainda não existem registos de pagamento na base de dados. O Administrador precisa de inicializar a tabela.")
@@ -529,7 +525,7 @@ else:
 
         **🥇 Classificação Geral (Critérios de Desempate)** Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:  
         1. **Maior número de pontos gerais** (1 Ponto por cada vencedor acertado ou empate).  
-        2. **Maior quantidade de campeões da rodada**.
+        2. **Maior quantidade de campeões da rodada.**
 
         **⏳ Limite de Palpites** * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
         * Após esse limite, o jogo é bloqueado. Se não tiver deixado palpite, o sistema assumirá "Empate" automaticamente.  
@@ -666,7 +662,6 @@ else:
                 df_pagamentos = pd.DataFrame(pagamentos_atuais)
                 df_pagamentos = df_pagamentos.sort_values(by="nome").reset_index(drop=True)
                 
-                # Fórmula para calcular a altura dinâmica baseada no número de participantes, evitando scroll no editor!
                 altura_tabela = (len(df_pagamentos) + 1) * 36 + 3
                 
                 tabela_editada = st.data_editor(

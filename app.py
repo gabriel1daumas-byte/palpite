@@ -3,7 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime, time, timedelta
 import pytz
-import extra_streamlit_components as stx
+from streamlit_cookies_controller import CookieController
 
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
@@ -29,32 +29,30 @@ def get_rodada_ativa():
             return res.data[0]['rodada_ativa']
     except:
         pass
-    return 1
+    return 1  # Fallback caso a tabela ainda não exista
 
-# --- GESTOR DE COOKIES ---
-# Inicializa o gestor de cookies (deve ficar no escopo principal)
-cookie_manager = stx.CookieManager()
+# --- INICIALIZA O GESTOR DE COOKIES ---
+controller = CookieController()
 
 # --- CONTROLO DE SESSÃO AUTOMÁTICO ---
 if "logado" not in st.session_state:
-    # Tenta ler o cookie para ver se o utilizador já estava logado
-    cookie_email = cookie_manager.get(cookie="bolao_email")
-    
-    if cookie_email:
-        res = supabase.table("usuarios").select("*").eq("email", cookie_email).execute()
-        if res.data:
-            usuario = res.data[0]
-            st.session_state.logado = True
-            st.session_state.nome_usuario = usuario['nome']
-            st.session_state.email_usuario = usuario['email']
-            st.session_state.is_admin = usuario.get('is_admin', False)
-        else:
-            st.session_state.logado = False
-    else:
-        st.session_state.logado = False
-        st.session_state.nome_usuario = ""
-        st.session_state.email_usuario = ""
-        st.session_state.is_admin = False
+    st.session_state.logado = False
+    st.session_state.nome_usuario = ""
+    st.session_state.email_usuario = ""
+    st.session_state.is_admin = False
+
+# Lê o cookie de forma segura (evita o problema do 1º frame)
+cookie_email = controller.get('bolao_email')
+
+# Se não estiver logado na sessão atual, mas o cookie existir, faz auto-login
+if not st.session_state.logado and cookie_email:
+    res = supabase.table("usuarios").select("*").eq("email", cookie_email).execute()
+    if res.data:
+        usuario = res.data[0]
+        st.session_state.logado = True
+        st.session_state.nome_usuario = usuario['nome']
+        st.session_state.email_usuario = usuario['email']
+        st.session_state.is_admin = usuario.get('is_admin', False)
 
 # ==========================================
 # ECRÃ DE ACESSO (LOGIN)
@@ -72,6 +70,7 @@ if not st.session_state.logado:
         if len(resposta.data) > 0:
             usuario = resposta.data[0]
             
+            # --- PRIMEIRO ACESSO ---
             if not usuario.get("senha"):
                 st.info(f"Olá, **{usuario['nome']}**! Este é o seu primeiro acesso. Crie uma palavra-passe para continuar.")
                 with st.form("form_primeiro_acesso"):
@@ -79,8 +78,9 @@ if not st.session_state.logado:
                     if st.form_submit_button("Guardar e Entrar"):
                         if nova_senha:
                             supabase.table("usuarios").update({"senha": nova_senha}).eq("email", email_limpo).execute()
-                            # Salva o login no Cookie por 30 dias
-                            cookie_manager.set("bolao_email", email_limpo, expires_at=datetime.now() + timedelta(days=30))
+                            
+                            # Guarda o Cookie por 30 dias (2.592.000 segundos)
+                            controller.set('bolao_email', email_limpo, max_age=2592000)
                             
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
@@ -89,6 +89,8 @@ if not st.session_state.logado:
                             st.rerun()
                         else:
                             st.warning("A palavra-passe não pode estar vazia.")
+            
+            # --- ACESSO NORMAL ---
             else:
                 with st.form("form_login"):
                     senha_digitada = st.text_input("A sua palavra-passe:", type="password")
@@ -97,7 +99,8 @@ if not st.session_state.logado:
                     if st.form_submit_button("Entrar", use_container_width=True):
                         if senha_digitada == usuario["senha"]:
                             if lembrar_me:
-                                cookie_manager.set("bolao_email", email_limpo, expires_at=datetime.now() + timedelta(days=30))
+                                # Guarda o Cookie por 30 dias
+                                controller.set('bolao_email', email_limpo, max_age=2592000)
                                 
                             st.session_state.logado = True
                             st.session_state.nome_usuario = usuario['nome']
@@ -135,9 +138,11 @@ else:
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
-        cookie_manager.delete("bolao_email")
+        controller.remove('bolao_email')
         st.session_state.logado = False
         st.session_state.is_admin = False
+        st.session_state.nome_usuario = ""
+        st.session_state.email_usuario = ""
         st.rerun()
 
     # ------------------------------------------
@@ -204,6 +209,7 @@ else:
             df_pivot.columns = [f"Rodada {col}" for col in df_pivot.columns]
             
             df_pivot['Total'] = df_pivot.sum(axis=1)
+            # Ordenação com desempate alfabético
             df_pivot = df_pivot.sort_values(by=['Total', 'nome'], ascending=[False, True])
             
             st.dataframe(df_pivot, use_container_width=True, height=450)
@@ -258,7 +264,7 @@ else:
                 jogos_pendentes.append(jogo)
 
             if not jogos_pendentes:
-                st.success("🎉 Não tens palpites pendentes para esta rodada! (Todos os jogos foram votados ou já fecharam).")
+                st.success("🎉 Você não tem palpites pendentes para esta rodada! (Todos os jogos foram votados ou já fecharam).")
             else:
                 with st.form("form_palpites"):
                     palpites_feitos = {}

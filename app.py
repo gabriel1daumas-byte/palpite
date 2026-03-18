@@ -158,17 +158,15 @@ else:
             agora = datetime.now(fuso_br)
             ids_jogos_rodada = [j['id'] for j in jogos]
             
-            # Puxa os palpites que o utilizador já fez para preencher os campos
             palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
             mapa_ja_palpitou = {p['id_jogo']: p['palpite'] for p in palpites_existentes}
             
             jogos_abertos = []
             
-            # Filtra apenas os jogos que AINDA NÃO fecharam
             for jogo in jogos:
                 if jogo.get('horario_fechamento'):
                     fechamento = converter_para_br(jogo['horario_fechamento'])
-                    if agora >= fechamento: # Se já passou dos 30 minutos antes do jogo, esconde da edição
+                    if agora >= fechamento: 
                         continue 
                 
                 jogos_abertos.append(jogo)
@@ -186,9 +184,11 @@ else:
                         fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                         
                         if fechamento:
-                            st.caption(f"⏳ Fecha para palpites em: {fechamento.strftime('%d/%m às %H:%M')}")
+                            # O banco de dados guarda a hora exata do limite das apostas
+                            # Somamos 30 minutos aqui apenas para mostrar a hora do apito inicial ao utilizador
+                            hora_jogo = fechamento + timedelta(minutes=30)
+                            st.caption(f"🕒 **Jogo às:** {hora_jogo.strftime('%H:%M')} | ⏳ **Fecha palpites às:** {fechamento.strftime('%H:%M')}")
                             
-                        # Lógica para pré-selecionar o palpite antigo, se existir
                         palpite_atual = mapa_ja_palpitou.get(jogo['id'])
                         idx_atual = opcoes.index(palpite_atual) if palpite_atual in opcoes else 1
                             
@@ -204,21 +204,18 @@ else:
                         salvou_algum = False
                         
                         for id_jogo, novo_palpite in palpites_feitos.items():
-                            # Trava de Segurança: Verifica a hora no exato momento do clique
                             jogo_info = next(j for j in jogos_abertos if j['id'] == id_jogo)
                             fechamento_seguro = converter_para_br(jogo_info['horario_fechamento']) if jogo_info.get('horario_fechamento') else None
                             
+                            # Bloqueio de segurança se a pessoa tentar guardar depois da hora limite
                             if fechamento_seguro and agora_submit >= fechamento_seguro:
                                 st.error(f"⚠️ O tempo para o jogo {jogo_info['time_casa']} x {jogo_info['time_fora']} acabou enquanto preenchia! O palpite não foi aceite.")
                                 continue
                                 
-                            # Se o palpite mudou ou é um palpite novo
                             if mapa_ja_palpitou.get(id_jogo) != novo_palpite:
                                 if id_jogo in mapa_ja_palpitou:
-                                    # Edição segura (evita duplicados no Supabase)
                                     supabase.table("palpites").update({"palpite": novo_palpite}).eq("nome_amigo", st.session_state.nome_usuario).eq("id_jogo", id_jogo).execute()
                                 else:
-                                    # Inserção nova
                                     supabase.table("palpites").insert({
                                         "nome_amigo": st.session_state.nome_usuario,
                                         "id_jogo": id_jogo,
@@ -383,11 +380,9 @@ else:
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                 passou_do_tempo = fechamento and agora >= fechamento
                 
-                # Conta quantos utilizadores já deixaram o palpite NESTE jogo específico
                 votos_neste_jogo = sum(1 for nome in nomes_usuarios if (jogo['id'], nome) in mapa_palpites)
                 todos_votaram = (votos_neste_jogo == total_usuarios)
                 
-                # Jogo é liberado se passou do tempo OU se todos já votaram
                 jogo_liberado = passou_do_tempo or todos_votaram
                 
                 for nome in nomes_usuarios:
@@ -433,7 +428,7 @@ else:
             if st.form_submit_button("Registar Partida", use_container_width=True):
                 dt_jogo = fuso_br.localize(datetime.combine(data_jogo, hora_jogo))
                 
-                # O limite agora é gravado como EXATAMENTE 30 minutos antes do jogo
+                # Subtrai 30 minutos para gravar a hora de fechamento
                 dt_fechamento = dt_jogo - timedelta(minutes=30)
                 
                 supabase.table("jogos").insert({

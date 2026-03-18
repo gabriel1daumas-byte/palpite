@@ -433,7 +433,6 @@ else:
         usuarios = supabase.table("usuarios").select("nome").execute().data
         
         nomes_usuarios = [u['nome'] for u in usuarios]
-        total_usuarios = len(nomes_usuarios)
         agora = datetime.now(fuso_br)
         
         if jogos:
@@ -443,12 +442,9 @@ else:
             for jogo in jogos:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
-                passou_do_tempo = fechamento and agora >= fechamento
                 
-                votos_neste_jogo = sum(1 for nome in nomes_usuarios if (jogo['id'], nome) in mapa_palpites)
-                todos_votaram = (votos_neste_jogo == total_usuarios)
-                
-                jogo_liberado = passou_do_tempo or todos_votaram
+                # A lógica agora é simples: o jogo só é liberado se a hora atual já passou da hora de fechamento.
+                jogo_liberado = fechamento and agora >= fechamento
                 
                 for nome in nomes_usuarios:
                     palpite_real = mapa_palpites.get((jogo['id'], nome))
@@ -456,7 +452,7 @@ else:
                     if palpite_real:
                         palpite_visivel = palpite_real if jogo_liberado else "🔒 Oculto"
                     else:
-                        palpite_visivel = "Empate (Auto)" if passou_do_tempo else "Pendente"
+                        palpite_visivel = "Empate (Auto)" if jogo_liberado else "Pendente"
                         
                     dados_tabela.append({"Nome": nome, "Partida": partida, "Palpite": palpite_visivel})
                     
@@ -529,7 +525,7 @@ else:
 
         **⏳ Limite de Palpites** * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
         * Após esse limite, o jogo é bloqueado. Se não tiver deixado palpite, o sistema assumirá "Empate" automaticamente.  
-        * Assim que o jogo bloqueia (ou assim que todos os participantes votarem), os palpites ficam públicos para todos verem.
+        * Assim que o jogo bloqueia, os palpites ficam públicos para todos verem.
         """)
 
     # ------------------------------------------

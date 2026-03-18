@@ -8,11 +8,11 @@ import base64
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
 
-# NOVIDADE: Truque de CSS para forçar o Combo (Selectbox) a mostrar todos os itens sem scroll
+# Truque de CSS para forçar o Combo (Selectbox) a mostrar todos os itens sem scroll
 st.markdown("""
     <style>
     div[data-baseweb="popover"] ul {
-        max-height: 500px !important;
+        max-height: 800px !important;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -141,7 +141,6 @@ else:
     if st.session_state.is_admin:
         opcoes_menu.append("⚙️ Admin")
         
-    # Voltou a ser Selectbox (Combo)
     menu = st.sidebar.selectbox("Navegação", opcoes_menu)
     
     st.sidebar.divider()
@@ -281,7 +280,8 @@ else:
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos", "Títulos (Desempate)"]
             
-            st.dataframe(df_geral, use_container_width=True)
+            # NOVIDADE: st.table resolve o scroll de vez!
+            st.table(df_geral)
 
     # ------------------------------------------
     # 3. MEUS PALPITES 
@@ -317,7 +317,9 @@ else:
                     "Resultado Real": res_real
                 })
                 
-            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
+            df_view = pd.DataFrame(dados_view)
+            # NOVIDADE: st.table e transformando Partida no index para ficar limpo
+            st.table(df_view.set_index("Partida"))
         else:
             st.info("Nenhum jogo nesta rodada.")
 
@@ -357,10 +359,11 @@ else:
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
-                    st.write("🏆 **Ranking de Vitórias (Mais vezes Campeão)**")
+                    st.write("🏆 **Ranking de Vitórias**")
                     ranking_vitorias = df_campeoes['nome'].value_counts().reset_index()
                     ranking_vitorias.columns = ["Participante", "Qtd. Rodadas Ganhas"]
-                    st.dataframe(ranking_vitorias, use_container_width=True, hide_index=True)
+                    # NOVIDADE: Tabela desenrolada
+                    st.table(ranking_vitorias.set_index("Participante"))
                 
                 with col2:
                     st.write("🔎 **Consultar Vencedor por Rodada**")
@@ -369,7 +372,7 @@ else:
                     
                     vencedores_desta_rodada = df_campeoes[df_campeoes['rodada'] == rodada_selecionada]
                     vencedores_desta_rodada = vencedores_desta_rodada[['nome', 'pontos']].rename(columns={"nome": "Campeão(ões)", "pontos": "Pontos Feitos"})
-                    st.dataframe(vencedores_desta_rodada, use_container_width=True, hide_index=True)
+                    st.table(vencedores_desta_rodada.set_index("Campeão(ões)"))
             else:
                 st.info("Nenhum palpite registado ainda.")
 
@@ -418,7 +421,8 @@ else:
             df_temp = df_temp.sort_values(by=['Total', 'titulos', 'nome'], ascending=[False, False, True])
             df_pivot = df_temp.drop(columns=['titulos']).set_index('nome')
             
-            st.dataframe(df_pivot, use_container_width=True, height=450)
+            # NOVIDADE: Tabela desenrolada
+            st.table(df_pivot)
 
     # ------------------------------------------
     # 6. VER PALPITES DA GALERA
@@ -484,7 +488,8 @@ else:
                 status = res_real if res_real else "⏳ A aguardar resultado"
                 dados_view.append({"Partida": partida, "Vencedor Oficial": status})
                 
-            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
+            df_view = pd.DataFrame(dados_view)
+            st.table(df_view.set_index("Partida"))
         else:
             st.info("Nenhum jogo registado para esta rodada.")
 
@@ -507,7 +512,8 @@ else:
             df_pag = df_pag.rename(columns=colunas_map)
             df_pag = df_pag.sort_values(by="Participantes").reset_index(drop=True)
             
-            st.table(df_pag)
+            # Limpa o index (que era numérico) para focar apenas no Participante
+            st.table(df_pag.set_index("Participantes"))
         else:
             st.info("Ainda não existem registos de pagamento na base de dados. O Administrador precisa de inicializar a tabela.")
 
@@ -523,7 +529,7 @@ else:
 
         **🥇 Classificação Geral (Critérios de Desempate)** Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:  
         1. **Maior número de pontos gerais** (1 Ponto por cada vencedor acertado ou empate).  
-        2. **Maior quantidade de campeões da rodada.**
+        2. **Maior quantidade de campeões da rodada**.
 
         **⏳ Limite de Palpites** * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
         * Após esse limite, o jogo é bloqueado. Se não tiver deixado palpite, o sistema assumirá "Empate" automaticamente.  
@@ -660,8 +666,12 @@ else:
                 df_pagamentos = pd.DataFrame(pagamentos_atuais)
                 df_pagamentos = df_pagamentos.sort_values(by="nome").reset_index(drop=True)
                 
+                # Fórmula para calcular a altura dinâmica baseada no número de participantes, evitando scroll no editor!
+                altura_tabela = (len(df_pagamentos) + 1) * 36 + 3
+                
                 tabela_editada = st.data_editor(
                     df_pagamentos,
+                    height=altura_tabela,
                     column_config={
                         "nome": st.column_config.TextColumn("Participantes", disabled=True),
                         "m02": "02/2026", "m03": "03/2026", "m04": "04/2026", "m05": "05/2026",

@@ -116,7 +116,6 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
-    # NOVIDADE: Ordem dos menus atualizada com as novas abas
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -248,50 +247,70 @@ else:
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
-            
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
-            df_geral = df_completo.groupby('nome')['pontos'].sum().reset_index()
-            df_geral = df_geral.sort_values(by=['pontos', 'nome'], ascending=[False, True]).reset_index(drop=True)
-            df_geral.index += 1
-            df_geral.columns = ["Participante", "Total de Pontos"]
+            # --- LÓGICA DE DESEMPATE (Maior quantidade de campeões) ---
+            df_agrupado_rodada = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
+            rodadas_com_jogos = df_jogos['rodada'].unique()
+            df_rodadas_validas = df_agrupado_rodada[df_agrupado_rodada['rodada'].isin(rodadas_com_jogos)]
             
-            st.dataframe(df_geral, use_container_width=True, height=450)
+            if not df_rodadas_validas.empty:
+                idx_max = df_rodadas_validas.groupby('rodada')['pontos'].transform(max) == df_rodadas_validas['pontos']
+                df_campeoes = df_rodadas_validas[idx_max]
+                df_titulos = df_campeoes['nome'].value_counts().reset_index()
+                df_titulos.columns = ['nome', 'titulos']
+            else:
+                df_titulos = pd.DataFrame(columns=['nome', 'titulos'])
+
+            df_geral = df_completo.groupby('nome')['pontos'].sum().reset_index()
+            df_geral = df_geral.merge(df_titulos, on='nome', how='left')
+            df_geral['titulos'] = df_geral['titulos'].fillna(0).astype(int)
+            
+            # Ordena por: 1º Pontos, 2º Quantidade de Títulos, 3º Ordem Alfabética
+            df_geral = df_geral.sort_values(by=['pontos', 'titulos', 'nome'], ascending=[False, False, True]).reset_index(drop=True)
+            df_geral.index += 1
+            df_geral.columns = ["Participante", "Total de Pontos", "Títulos (Desempate)"]
+            
+            st.dataframe(df_geral, use_container_width=True)
 
     # ------------------------------------------
-    # 3. CAMPEÕES DA RODADA (NOVO)
+    # 3. CAMPEÕES DA RODADA
     # ------------------------------------------
     elif menu == "Campeões da Rodada":
         st.subheader("👑 Campeões por Rodada")
         
         res_jogos = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
+        res_usuarios = supabase.table("usuarios").select("nome").execute()
         res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
         
         if not res_jogos.data:
             st.info("Ainda não há jogos finalizados para determinar campeões.")
         else:
             df_jogos = pd.DataFrame(res_jogos.data)
+            df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            if not df_palpites.empty:
-                df_completo = df_palpites.merge(df_jogos, left_on='id_jogo', right_on='id', how='inner')
-                df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
-                df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
-                df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
-                
-                # Agrupa por Nome e Rodada para saber quantos pontos cada um fez na rodada
-                df_agrupado = df_completo.groupby(['rodada', 'nome_amigo'])['pontos'].sum().reset_index()
-                
-                # Encontra a pontuação máxima de cada rodada
-                idx_max = df_agrupado.groupby('rodada')['pontos'].transform(max) == df_agrupado['pontos']
-                df_campeoes = df_agrupado[idx_max]
+            df_cross = df_usuarios.merge(df_jogos, how='cross')
+            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
+            
+            df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
+            df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
+            df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
+            df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
+            
+            df_agrupado_rodada = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
+            rodadas_com_jogos = df_jogos['rodada'].unique()
+            df_rodadas_validas = df_agrupado_rodada[df_agrupado_rodada['rodada'].isin(rodadas_com_jogos)]
+            
+            if not df_rodadas_validas.empty:
+                idx_max = df_rodadas_validas.groupby('rodada')['pontos'].transform(max) == df_rodadas_validas['pontos']
+                df_campeoes = df_rodadas_validas[idx_max]
                 
                 col1, col2 = st.columns([1, 1])
                 
                 with col1:
                     st.write("🏆 **Ranking de Vitórias (Mais vezes Campeão)**")
-                    # Conta quantas vezes cada nome aparece na lista de campeões
-                    ranking_vitorias = df_campeoes['nome_amigo'].value_counts().reset_index()
+                    ranking_vitorias = df_campeoes['nome'].value_counts().reset_index()
                     ranking_vitorias.columns = ["Participante", "Qtd. Rodadas Ganhas"]
                     st.dataframe(ranking_vitorias, use_container_width=True, hide_index=True)
                 
@@ -301,7 +320,7 @@ else:
                     rodada_selecionada = st.selectbox("Escolha a Rodada", rodadas_disponiveis)
                     
                     vencedores_desta_rodada = df_campeoes[df_campeoes['rodada'] == rodada_selecionada]
-                    vencedores_desta_rodada = vencedores_desta_rodada[['nome_amigo', 'pontos']].rename(columns={"nome_amigo": "Campeão(ões)", "pontos": "Pontos Feitos"})
+                    vencedores_desta_rodada = vencedores_desta_rodada[['nome', 'pontos']].rename(columns={"nome": "Campeão(ões)", "pontos": "Pontos Feitos"})
                     st.dataframe(vencedores_desta_rodada, use_container_width=True, hide_index=True)
             else:
                 st.info("Nenhum palpite registado ainda.")
@@ -370,11 +389,25 @@ else:
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
             df_agrupado = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
+            
+            # Pegar desempate de títulos novamente para a organização fina
+            rodadas_com_jogos = df_jogos['rodada'].unique()
+            df_rodadas_validas = df_agrupado[df_agrupado['rodada'].isin(rodadas_com_jogos)]
+            if not df_rodadas_validas.empty:
+                idx_max = df_rodadas_validas.groupby('rodada')['pontos'].transform(max) == df_rodadas_validas['pontos']
+                df_titulos = df_rodadas_validas[idx_max]['nome'].value_counts().reset_index()
+                df_titulos.columns = ['nome', 'titulos']
+            else:
+                df_titulos = pd.DataFrame(columns=['nome', 'titulos'])
+            
             df_pivot = df_agrupado.pivot(index='nome', columns='rodada', values='pontos').fillna(0).astype(int)
             df_pivot.columns = [f"Rodada {col}" for col in df_pivot.columns]
-            
             df_pivot['Total'] = df_pivot.sum(axis=1)
-            df_pivot = df_pivot.sort_values(by=['Total', 'nome'], ascending=[False, True])
+            
+            df_temp = df_pivot.reset_index().merge(df_titulos, on='nome', how='left')
+            df_temp['titulos'] = df_temp['titulos'].fillna(0).astype(int)
+            df_temp = df_temp.sort_values(by=['Total', 'titulos', 'nome'], ascending=[False, False, True])
+            df_pivot = df_temp.drop(columns=['titulos']).set_index('nome')
             
             st.dataframe(df_pivot, use_container_width=True, height=450)
 
@@ -441,12 +474,14 @@ else:
                     
             df_completo = pd.DataFrame(dados_tabela)
             tabela = df_completo.pivot_table(index="Nome", columns="Partida", values="Palpite", aggfunc='first')
-            st.dataframe(tabela, use_container_width=True)
+            
+            # NOVIDADE: Usando st.table para não ter barra de scroll vertical!
+            st.table(tabela)
         else:
             st.info("Sem dados para exibir.")
 
     # ------------------------------------------
-    # 8. PAGAMENTOS (NOVO)
+    # 8. PAGAMENTOS
     # ------------------------------------------
     elif menu == "Pagamentos":
         st.subheader("💰 Controlo de Pagamentos Mensais")
@@ -456,7 +491,6 @@ else:
         if res_pagamentos:
             df_pag = pd.DataFrame(res_pagamentos)
             
-            # Renomear as colunas do banco (m02, m03) para formato de exibição (02/2026, 03/2026)
             colunas_map = {
                 "nome": "Participantes", "m02": "02/2026", "m03": "03/2026", "m04": "04/2026",
                 "m05": "05/2026", "m06": "06/2026", "m07": "07/2026", "m08": "08/2026",
@@ -465,28 +499,27 @@ else:
             df_pag = df_pag.rename(columns=colunas_map)
             df_pag = df_pag.sort_values(by="Participantes").reset_index(drop=True)
             
-            st.dataframe(df_pag, use_container_width=True, hide_index=True)
+            # NOVIDADE: Usando st.table para ficar desenrolada 100% sem scroll!
+            st.table(df_pag)
         else:
             st.info("Ainda não existem registos de pagamento na base de dados. O Administrador precisa de inicializar a tabela.")
 
     # ------------------------------------------
-    # 9. REGRAS E DESEMPATES (NOVO)
+    # 9. REGRAS E DESEMPATES
     # ------------------------------------------
     elif menu == "Regras e Desempates":
         st.subheader("⚖️ Regras e Critérios de Desempate")
+        
         st.markdown("""
-        **🏆 Campeão da Rodada**
-        O Campeão da Rodada é aquele que obtiver a maior soma de pontos apenas nos jogos correspondentes àquela rodada específica.
-        * Se houver empate no número máximo de pontos, todos os empatados são considerados "Campeões" daquela rodada.
+        **🏆 Campeão da Rodada** O Campeão da Rodada é aquele que obtiver a maior soma de pontos apenas nos jogos correspondentes àquela rodada específica.  
+        Se houver empate no número máximo de pontos, todos os empatados são considerados "Campeões" daquela rodada.
 
-        **🥇 Classificação Geral (Critérios de Desempate)**
-        Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:
-        1. **Maior número de pontos gerais** (1 Ponto por cada vencedor acertado ou empate).
-        2. **Ordem Alfabética** (Critério automático do sistema para organizar a tabela em caso de empate total).
+        **🥇 Classificação Geral (Critérios de Desempate)** Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:  
+        1. **Maior número de pontos gerais** (1 Ponto por cada vencedor acertado ou empate).  
+        2. **Maior quantidade de campeões da rodada**
 
-        **⏳ Limite de Palpites**
-        * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.
-        * Após esse limite, o jogo é bloqueado. Se não tiver deixado palpite, o sistema assumirá "Empate" automaticamente.
+        **⏳ Limite de Palpites** * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
+        * Após esse limite, o jogo é bloqueado. Se não tiver deixado palpite, o sistema assumirá "Empate" automaticamente.  
         * Assim que o jogo bloqueia (ou assim que todos os participantes votarem), os palpites ficam públicos para todos verem.
         """)
 
@@ -494,7 +527,6 @@ else:
     # 10. ADMIN
     # ------------------------------------------
     elif menu == "⚙️ Admin":
-        # Abas internas no Admin para organizar as tarefas
         aba1, aba2, aba3, aba4 = st.tabs(["Partidas e Rodada", "Lançar Resultados", "📱 Relatórios WhatsApp", "💰 Gerir Pagamentos"])
         
         with aba1:
@@ -562,7 +594,6 @@ else:
             else:
                 st.write("Nenhum jogo registado para esta rodada.")
         
-        # --- NOVIDADE: Relatórios WhatsApp ---
         with aba3:
             st.subheader("📱 Gerador de Relatórios WhatsApp")
             st.write(f"Estes relatórios baseiam-se na **Rodada {rodada_ativa_atual} (Ativa)**.")
@@ -573,11 +604,9 @@ else:
                 st.warning("Não há jogos registados na rodada ativa para gerar relatórios.")
             else:
                 if st.button("📋 Gerar Relatório de Faltosos", use_container_width=True):
-                    # Puxa todos os nomes
                     todos_usuarios = supabase.table("usuarios").select("nome").execute().data
                     nomes_todos = [u['nome'] for u in todos_usuarios]
                     
-                    # Puxa quem já palpitou na rodada
                     ids_jogos = [j['id'] for j in jogos_ativos]
                     palpites_feitos = supabase.table("palpites").select("nome_amigo").in_("id_jogo", ids_jogos).execute().data
                     nomes_votaram = set([p['nome_amigo'] for p in palpites_feitos])
@@ -605,12 +634,10 @@ else:
                     st.info("Copie a mensagem abaixo:")
                     st.code(msg, language="text")
         
-        # --- NOVIDADE: Gestor de Pagamentos ---
         with aba4:
             st.subheader("💰 Gestor de Pagamentos")
             st.write("Edite diretamente a tabela abaixo. Pressione ENTER para guardar e depois clique em 'Salvar no Banco'. Digite 'X' para confirmar pago.")
             
-            # Sincroniza utilizadores: se houver alguém novo, insere na tabela de pagamentos
             usuarios = supabase.table("usuarios").select("nome").execute().data
             pagamentos = supabase.table("pagamentos").select("*").execute().data
             
@@ -621,15 +648,11 @@ else:
             for novo in novos:
                 supabase.table("pagamentos").insert({"nome": novo}).execute()
             
-            # Puxa novamente após sincronizar
             pagamentos_atuais = supabase.table("pagamentos").select("*").execute().data
             if pagamentos_atuais:
                 df_pagamentos = pd.DataFrame(pagamentos_atuais)
-                # Ordenar por nome para ficar mais fácil
                 df_pagamentos = df_pagamentos.sort_values(by="nome").reset_index(drop=True)
                 
-                # Exibe a tabela interativa (Data Editor do Streamlit)
-                # O admin pode editar todas as células (exceto o nome)
                 tabela_editada = st.data_editor(
                     df_pagamentos,
                     column_config={
@@ -644,7 +667,6 @@ else:
                 
                 if st.button("💾 Salvar Pagamentos no Banco", use_container_width=True):
                     for index, row in tabela_editada.iterrows():
-                        # Faz update de cada linha no supabase
                         supabase.table("pagamentos").update({
                             "m02": row["m02"], "m03": row["m03"], "m04": row["m04"],
                             "m05": row["m05"], "m06": row["m06"], "m07": row["m07"],

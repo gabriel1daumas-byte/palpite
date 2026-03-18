@@ -122,12 +122,13 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
+    # NOVIDADE: Ordem dos menus atualizada
     opcoes_menu = [
+        "Fazer Palpites", 
         "Classificação", 
+        "Meus Palpites", 
         "Total por Rodada", 
         "Resultados da Rodada",
-        "Fazer Palpites", 
-        "Meus Palpites", 
         "Ver Palpites da Galera"
     ]
     
@@ -146,100 +147,9 @@ else:
         st.rerun()
 
     # ------------------------------------------
-    # 1. CLASSIFICAÇÃO GERAL
+    # 1. FAZER PALPITES
     # ------------------------------------------
-    if menu == "Classificação":
-        st.subheader("🏆 Ranking Global")
-        
-        res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
-        res_usuarios = supabase.table("usuarios").select("nome").execute()
-        res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
-        
-        if not res_jogos_encerrados.data:
-            st.info("Ainda não há resultados finais lançados para contabilizar pontos.")
-        else:
-            df_jogos = pd.DataFrame(res_jogos_encerrados.data)
-            df_usuarios = pd.DataFrame(res_usuarios.data)
-            df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
-            
-            df_cross = df_usuarios.merge(df_jogos, how='cross')
-            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
-            
-            df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
-            df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
-            df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
-            
-            df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
-            
-            df_geral = df_completo.groupby('nome')['pontos'].sum().reset_index()
-            # Ordenação: Pontos (decrescente), depois Nome (alfabético crescente)
-            df_geral = df_geral.sort_values(by=['pontos', 'nome'], ascending=[False, True]).reset_index(drop=True)
-            df_geral.index += 1
-            df_geral.columns = ["Participante", "Total de Pontos"]
-            
-            st.dataframe(df_geral, use_container_width=True, height=450)
-
-    # ------------------------------------------
-    # 2. TOTAL POR RODADA
-    # ------------------------------------------
-    elif menu == "Total por Rodada":
-        st.subheader("📊 Pontos Detalhados por Rodada")
-        
-        res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
-        res_usuarios = supabase.table("usuarios").select("nome").execute()
-        res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
-        
-        if not res_jogos_encerrados.data:
-            st.info("Ainda não há resultados finais lançados para contabilizar pontos.")
-        else:
-            df_jogos = pd.DataFrame(res_jogos_encerrados.data)
-            df_usuarios = pd.DataFrame(res_usuarios.data)
-            df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
-            
-            df_cross = df_usuarios.merge(df_jogos, how='cross')
-            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
-            
-            df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
-            df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
-            df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
-            df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
-            
-            df_agrupado = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
-            df_pivot = df_agrupado.pivot(index='nome', columns='rodada', values='pontos').fillna(0).astype(int)
-            df_pivot.columns = [f"Rodada {col}" for col in df_pivot.columns]
-            
-            df_pivot['Total'] = df_pivot.sum(axis=1)
-            # Ordenação com desempate alfabético
-            df_pivot = df_pivot.sort_values(by=['Total', 'nome'], ascending=[False, True])
-            
-            st.dataframe(df_pivot, use_container_width=True, height=450)
-
-    # ------------------------------------------
-    # 3. RESULTADOS DA RODADA
-    # ------------------------------------------
-    elif menu == "Resultados da Rodada":
-        st.subheader("🏁 Resultados Oficiais")
-        rodada = st.number_input("Selecione a Rodada", min_value=1, step=1, value=rodada_ativa_atual)
-        
-        jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
-        
-        if jogos:
-            dados_view = []
-            for jogo in jogos:
-                partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
-                res_real = jogo.get("resultado_real")
-                
-                status = res_real if res_real else "⏳ A aguardar resultado"
-                dados_view.append({"Partida": partida, "Vencedor Oficial": status})
-                
-            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
-        else:
-            st.info("Nenhum jogo registado para esta rodada.")
-
-    # ------------------------------------------
-    # 4. FAZER PALPITES
-    # ------------------------------------------
-    elif menu == "Fazer Palpites":
+    if menu == "Fazer Palpites":
         st.subheader(f"Deixe os seus palpites (Rodada {rodada_ativa_atual})")
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada_ativa_atual).execute().data
         
@@ -295,7 +205,41 @@ else:
                         st.rerun()
 
     # ------------------------------------------
-    # 5. MEUS PALPITES 
+    # 2. CLASSIFICAÇÃO GERAL
+    # ------------------------------------------
+    elif menu == "Classificação":
+        st.subheader("🏆 Ranking Global")
+        
+        res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
+        res_usuarios = supabase.table("usuarios").select("nome").execute()
+        res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
+        
+        if not res_jogos_encerrados.data:
+            st.info("Ainda não há resultados finais lançados para contabilizar pontos.")
+        else:
+            df_jogos = pd.DataFrame(res_jogos_encerrados.data)
+            df_usuarios = pd.DataFrame(res_usuarios.data)
+            df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
+            
+            df_cross = df_usuarios.merge(df_jogos, how='cross')
+            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
+            
+            df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
+            df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
+            df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
+            
+            df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
+            
+            df_geral = df_completo.groupby('nome')['pontos'].sum().reset_index()
+            # Ordenação: Pontos (decrescente), depois Nome (alfabético crescente)
+            df_geral = df_geral.sort_values(by=['pontos', 'nome'], ascending=[False, True]).reset_index(drop=True)
+            df_geral.index += 1
+            df_geral.columns = ["Participante", "Total de Pontos"]
+            
+            st.dataframe(df_geral, use_container_width=True, height=450)
+
+    # ------------------------------------------
+    # 3. MEUS PALPITES 
     # ------------------------------------------
     elif menu == "Meus Palpites":
         st.subheader("Os Meus Palpites")
@@ -331,6 +275,63 @@ else:
             st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
         else:
             st.info("Nenhum jogo nesta rodada.")
+
+    # ------------------------------------------
+    # 4. TOTAL POR RODADA
+    # ------------------------------------------
+    elif menu == "Total por Rodada":
+        st.subheader("📊 Pontos Detalhados por Rodada")
+        
+        res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
+        res_usuarios = supabase.table("usuarios").select("nome").execute()
+        res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
+        
+        if not res_jogos_encerrados.data:
+            st.info("Ainda não há resultados finais lançados para contabilizar pontos.")
+        else:
+            df_jogos = pd.DataFrame(res_jogos_encerrados.data)
+            df_usuarios = pd.DataFrame(res_usuarios.data)
+            df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
+            
+            df_cross = df_usuarios.merge(df_jogos, how='cross')
+            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
+            
+            df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
+            df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
+            df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
+            df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
+            
+            df_agrupado = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
+            df_pivot = df_agrupado.pivot(index='nome', columns='rodada', values='pontos').fillna(0).astype(int)
+            df_pivot.columns = [f"Rodada {col}" for col in df_pivot.columns]
+            
+            df_pivot['Total'] = df_pivot.sum(axis=1)
+            # Ordenação com desempate alfabético
+            df_pivot = df_pivot.sort_values(by=['Total', 'nome'], ascending=[False, True])
+            
+            st.dataframe(df_pivot, use_container_width=True, height=450)
+
+    # ------------------------------------------
+    # 5. RESULTADOS DA RODADA
+    # ------------------------------------------
+    elif menu == "Resultados da Rodada":
+        st.subheader("🏁 Resultados Oficiais")
+        rodada = st.number_input("Selecione a Rodada", min_value=1, step=1, value=rodada_ativa_atual)
+        
+        jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
+        
+        if jogos:
+            dados_view = []
+            for jogo in jogos:
+                partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
+                res_real = jogo.get("resultado_real")
+                
+                status = res_real if res_real else "⏳ A aguardar resultado"
+                dados_view.append({"Partida": partida, "Vencedor Oficial": status})
+                
+            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
+        else:
+            st.info("Nenhum jogo registado para esta rodada.")
 
     # ------------------------------------------
     # 6. VER PALPITES DA GALERA 

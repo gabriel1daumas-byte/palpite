@@ -116,22 +116,24 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
+    # NOVIDADE: Ordem exata solicitada
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
-        "Campeões da Rodada",
         "Meus Palpites", 
+        "Campeão da Rodada",
         "Total por Rodada", 
-        "Resultados da Rodada",
         "Ver Palpites da Galera",
-        "Pagamentos",
-        "Regras e Desempates"
+        "Resultados da Rodada",
+        "Pagamento",
+        "Regras e desempates"
     ]
     
     if st.session_state.is_admin:
         opcoes_menu.append("⚙️ Admin")
         
-    menu = st.sidebar.selectbox("Navegação", opcoes_menu)
+    # NOVIDADE: Uso de radio button para mostrar o menu 100% aberto sem scroll
+    menu = st.sidebar.radio("Navegação", opcoes_menu)
     
     st.sidebar.divider()
     if st.sidebar.button("🚪 Sair da Conta", use_container_width=True):
@@ -247,9 +249,9 @@ else:
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
+            
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
-            # --- LÓGICA DE DESEMPATE (Maior quantidade de campeões) ---
             df_agrupado_rodada = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
             rodadas_com_jogos = df_jogos['rodada'].unique()
             df_rodadas_validas = df_agrupado_rodada[df_agrupado_rodada['rodada'].isin(rodadas_com_jogos)]
@@ -266,7 +268,7 @@ else:
             df_geral = df_geral.merge(df_titulos, on='nome', how='left')
             df_geral['titulos'] = df_geral['titulos'].fillna(0).astype(int)
             
-            # Ordena por: 1º Pontos, 2º Quantidade de Títulos, 3º Ordem Alfabética
+            # Ordena por: 1º Pontos, 2º Quantidade de Títulos, 3º Ordem Alfabética (silencioso)
             df_geral = df_geral.sort_values(by=['pontos', 'titulos', 'nome'], ascending=[False, False, True]).reset_index(drop=True)
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos", "Títulos (Desempate)"]
@@ -274,9 +276,47 @@ else:
             st.dataframe(df_geral, use_container_width=True)
 
     # ------------------------------------------
-    # 3. CAMPEÕES DA RODADA
+    # 3. MEUS PALPITES 
     # ------------------------------------------
-    elif menu == "Campeões da Rodada":
+    elif menu == "Meus Palpites":
+        st.subheader("Os Meus Palpites")
+        rodada = st.number_input("Filtrar por Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_meus")
+        
+        jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
+        meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).execute().data
+        
+        if jogos:
+            agora = datetime.now(fuso_br)
+            mapa_meus = {p['id_jogo']: p['palpite'] for p in meus_palpites}
+            dados_view = []
+            
+            for jogo in jogos:
+                partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
+                res_real = jogo.get("resultado_real") or "A aguardar..."
+                
+                fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
+                jogo_fechado = fechamento and agora >= fechamento
+                palpite_feito = mapa_meus.get(jogo['id'])
+                
+                if palpite_feito:
+                    palpite_mostrar = palpite_feito
+                else:
+                    palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente (Ainda pode votar/editar)"
+                        
+                dados_view.append({
+                    "Partida": partida,
+                    "O Meu Palpite": palpite_mostrar,
+                    "Resultado Real": res_real
+                })
+                
+            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
+        else:
+            st.info("Nenhum jogo nesta rodada.")
+
+    # ------------------------------------------
+    # 4. CAMPEÕES DA RODADA
+    # ------------------------------------------
+    elif menu == "Campeão da Rodada":
         st.subheader("👑 Campeões por Rodada")
         
         res_jogos = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
@@ -326,44 +366,6 @@ else:
                 st.info("Nenhum palpite registado ainda.")
 
     # ------------------------------------------
-    # 4. MEUS PALPITES 
-    # ------------------------------------------
-    elif menu == "Meus Palpites":
-        st.subheader("Os Meus Palpites")
-        rodada = st.number_input("Filtrar por Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_meus")
-        
-        jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
-        meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).execute().data
-        
-        if jogos:
-            agora = datetime.now(fuso_br)
-            mapa_meus = {p['id_jogo']: p['palpite'] for p in meus_palpites}
-            dados_view = []
-            
-            for jogo in jogos:
-                partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
-                res_real = jogo.get("resultado_real") or "A aguardar..."
-                
-                fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
-                jogo_fechado = fechamento and agora >= fechamento
-                palpite_feito = mapa_meus.get(jogo['id'])
-                
-                if palpite_feito:
-                    palpite_mostrar = palpite_feito
-                else:
-                    palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente (Ainda pode votar/editar)"
-                        
-                dados_view.append({
-                    "Partida": partida,
-                    "O Meu Palpite": palpite_mostrar,
-                    "Resultado Real": res_real
-                })
-                
-            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
-        else:
-            st.info("Nenhum jogo nesta rodada.")
-
-    # ------------------------------------------
     # 5. TOTAL POR RODADA
     # ------------------------------------------
     elif menu == "Total por Rodada":
@@ -390,7 +392,6 @@ else:
             
             df_agrupado = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
             
-            # Pegar desempate de títulos novamente para a organização fina
             rodadas_com_jogos = df_jogos['rodada'].unique()
             df_rodadas_validas = df_agrupado[df_agrupado['rodada'].isin(rodadas_com_jogos)]
             if not df_rodadas_validas.empty:
@@ -412,29 +413,7 @@ else:
             st.dataframe(df_pivot, use_container_width=True, height=450)
 
     # ------------------------------------------
-    # 6. RESULTADOS DA RODADA
-    # ------------------------------------------
-    elif menu == "Resultados da Rodada":
-        st.subheader("🏁 Resultados Oficiais")
-        rodada = st.number_input("Selecione a Rodada", min_value=1, step=1, value=rodada_ativa_atual)
-        
-        jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
-        
-        if jogos:
-            dados_view = []
-            for jogo in jogos:
-                partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
-                res_real = jogo.get("resultado_real")
-                
-                status = res_real if res_real else "⏳ A aguardar resultado"
-                dados_view.append({"Partida": partida, "Vencedor Oficial": status})
-                
-            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
-        else:
-            st.info("Nenhum jogo registado para esta rodada.")
-
-    # ------------------------------------------
-    # 7. VER PALPITES DA GALERA 
+    # 6. VER PALPITES DA GALERA
     # ------------------------------------------
     elif menu == "Ver Palpites da Galera":
         st.subheader("Quem apostou no quê?")
@@ -475,16 +454,37 @@ else:
             df_completo = pd.DataFrame(dados_tabela)
             tabela = df_completo.pivot_table(index="Nome", columns="Partida", values="Palpite", aggfunc='first')
             
-            # NOVIDADE: Usando st.table para não ter barra de scroll vertical!
             st.table(tabela)
         else:
             st.info("Sem dados para exibir.")
 
     # ------------------------------------------
-    # 8. PAGAMENTOS
+    # 7. RESULTADOS DA RODADA
     # ------------------------------------------
-    elif menu == "Pagamentos":
-        st.subheader("💰 Controlo de Pagamentos Mensais")
+    elif menu == "Resultados da Rodada":
+        st.subheader("🏁 Resultados Oficiais")
+        rodada = st.number_input("Selecione a Rodada", min_value=1, step=1, value=rodada_ativa_atual)
+        
+        jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
+        
+        if jogos:
+            dados_view = []
+            for jogo in jogos:
+                partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
+                res_real = jogo.get("resultado_real")
+                
+                status = res_real if res_real else "⏳ A aguardar resultado"
+                dados_view.append({"Partida": partida, "Vencedor Oficial": status})
+                
+            st.dataframe(pd.DataFrame(dados_view), hide_index=True, use_container_width=True)
+        else:
+            st.info("Nenhum jogo registado para esta rodada.")
+
+    # ------------------------------------------
+    # 8. PAGAMENTO
+    # ------------------------------------------
+    elif menu == "Pagamento":
+        st.subheader("💰 Controlo de Pagamento Mensal")
         st.write("Acompanhe o estado das mensalidades (X = Pago).")
         
         res_pagamentos = supabase.table("pagamentos").select("*").execute().data
@@ -499,7 +499,6 @@ else:
             df_pag = df_pag.rename(columns=colunas_map)
             df_pag = df_pag.sort_values(by="Participantes").reset_index(drop=True)
             
-            # NOVIDADE: Usando st.table para ficar desenrolada 100% sem scroll!
             st.table(df_pag)
         else:
             st.info("Ainda não existem registos de pagamento na base de dados. O Administrador precisa de inicializar a tabela.")
@@ -507,18 +506,21 @@ else:
     # ------------------------------------------
     # 9. REGRAS E DESEMPATES
     # ------------------------------------------
-    elif menu == "Regras e Desempates":
+    elif menu == "Regras e desempates":
         st.subheader("⚖️ Regras e Critérios de Desempate")
         
         st.markdown("""
-        **🏆 Campeão da Rodada** O Campeão da Rodada é aquele que obtiver a maior soma de pontos apenas nos jogos correspondentes àquela rodada específica.  
+        **🏆 Campeão da Rodada**
+        O Campeão da Rodada é aquele que obtiver a maior soma de pontos apenas nos jogos correspondentes àquela rodada específica.  
         Se houver empate no número máximo de pontos, todos os empatados são considerados "Campeões" daquela rodada.
 
-        **🥇 Classificação Geral (Critérios de Desempate)** Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:  
+        **🥇 Classificação Geral (Critérios de Desempate)**
+        Em caso de empate na pontuação total do Bolão, a ordem na tabela classificativa é definida pelos seguintes critérios:  
         1. **Maior número de pontos gerais** (1 Ponto por cada vencedor acertado ou empate).  
-        2. **Maior quantidade de campeões da rodada**
+        2. **Maior quantidade de campeões da rodada.**
 
-        **⏳ Limite de Palpites** * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
+        **⏳ Limite de Palpites**
+        * Os palpites podem ser inseridos ou alterados até **exatamente 30 minutos antes** do horário oficial de início da partida.  
         * Após esse limite, o jogo é bloqueado. Se não tiver deixado palpite, o sistema assumirá "Empate" automaticamente.  
         * Assim que o jogo bloqueia (ou assim que todos os participantes votarem), os palpites ficam públicos para todos verem.
         """)

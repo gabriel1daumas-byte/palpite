@@ -8,12 +8,12 @@ import base64
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
 
-# LISTA OFICIAL DE TIMES DA SÉRIE A (Edite aqui quando houver subidas/descidas no ano que vem)
+# LISTA OFICIAL DE TIMES DA SÉRIE A - 2026
 TIMES_SERIE_A = sorted([
-    "Athletico-PR", "Atlético-GO", "Atlético-MG", "Bahia", "Botafogo",
-    "Bragantino", "Corinthians", "Criciúma", "Cruzeiro", "Cuiabá",
-    "Flamengo", "Fluminense", "Fortaleza", "Grêmio", "Internacional",
-    "Juventude", "Palmeiras", "São Paulo", "Vasco", "Vitória"
+    "Atlético-MG" ,"Athletico-PR", "Bahia", "Botafogo", "Bragantino",
+    "Chapecoense", "Corinthians", "Coritiba", "Cruzeiro", "Flamengo",
+    "Fluminense", "Grêmio", "Internacional", "Mirassol", "Palmeiras",
+    "Remo", "Santos", "São Paulo", "Vasco", "Vitória"
 ])
 
 # Truque de CSS para forçar o Combo (Selectbox) da barra lateral a mostrar todos os itens sem scroll

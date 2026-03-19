@@ -8,6 +8,14 @@ import base64
 # --- CONFIGURAÇÃO INICIAL E CONEXÃO ---
 st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide")
 
+# LISTA OFICIAL DE TIMES DA SÉRIE A (Edite aqui quando houver subidas/descidas no ano que vem)
+TIMES_SERIE_A = sorted([
+    "Athletico-PR", "Atlético-GO", "Atlético-MG", "Bahia", "Botafogo",
+    "Bragantino", "Corinthians", "Criciúma", "Cruzeiro", "Cuiabá",
+    "Flamengo", "Fluminense", "Fortaleza", "Grêmio", "Internacional",
+    "Juventude", "Palmeiras", "São Paulo", "Vasco", "Vitória"
+])
+
 # Truque de CSS para forçar o Combo (Selectbox) da barra lateral a mostrar todos os itens sem scroll
 st.markdown("""
     <style>
@@ -125,7 +133,6 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
-    # Ordem exata solicitada pelo administrador
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -169,17 +176,14 @@ else:
             palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
             mapa_ja_palpitou = {p['id_jogo']: p['palpite'] for p in palpites_existentes}
             
-            # ORDENA OS JOGOS POR HORÁRIO
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             
             jogos_abertos = []
-            
             for jogo in jogos:
                 if jogo.get('horario_fechamento'):
                     fechamento = converter_para_br(jogo['horario_fechamento'])
                     if agora >= fechamento: 
                         continue 
-                
                 jogos_abertos.append(jogo)
 
             if not jogos_abertos:
@@ -187,10 +191,8 @@ else:
             else:
                 with st.form("form_palpites"):
                     palpites_feitos = {}
-                    
                     for jogo in jogos_abertos:
                         st.write(f"⚽ **{jogo['time_casa']} x {jogo['time_fora']}**")
-                        
                         opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
                         fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                         
@@ -200,10 +202,8 @@ else:
                             
                         palpite_atual = mapa_ja_palpitou.get(jogo['id'])
                         idx_atual = opcoes.index(palpite_atual) if palpite_atual in opcoes else 1
-                            
                         escolha = st.selectbox("Vencedor:", opcoes, index=idx_atual, key=f"jogo_{jogo['id']}")
                         palpites_feitos[jogo['id']] = escolha
-                        
                         st.write("---")
                     
                     enviar = st.form_submit_button("Guardar Palpites", use_container_width=True)
@@ -242,7 +242,6 @@ else:
     # ------------------------------------------
     elif menu == "Classificação":
         st.subheader("🏆 Ranking Global")
-        
         res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
         res_usuarios = supabase.table("usuarios").select("nome").execute()
         res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
@@ -260,10 +259,8 @@ else:
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
-            
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
-            # Lógica de desempate por títulos
             df_agrupado_rodada = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
             rodadas_com_jogos = df_jogos['rodada'].unique()
             df_rodadas_validas = df_agrupado_rodada[df_agrupado_rodada['rodada'].isin(rodadas_com_jogos)]
@@ -283,7 +280,6 @@ else:
             df_geral = df_geral.sort_values(by=['pontos', 'titulos', 'nome'], ascending=[False, False, True]).reset_index(drop=True)
             df_geral.index += 1
             df_geral.columns = ["Participante", "Total de Pontos", "Títulos (Desempate)"]
-            
             st.table(df_geral)
 
     # ------------------------------------------
@@ -292,14 +288,11 @@ else:
     elif menu == "Meus Palpites":
         st.subheader("Os Meus Palpites")
         rodada = st.number_input("Filtrar por Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_meus")
-        
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
         meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).execute().data
         
         if jogos:
-            # ORDENA OS JOGOS POR HORÁRIO
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
-            
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             agora = datetime.now(fuso_br)
             mapa_meus = {p['id_jogo']: p['palpite'] for p in meus_palpites}
             dados_view = []
@@ -307,7 +300,6 @@ else:
             for jogo in jogos:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
                 res_real = jogo.get("resultado_real") or "A aguardar..."
-                
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                 jogo_fechado = fechamento and agora >= fechamento
                 palpite_feito = mapa_meus.get(jogo['id'])
@@ -317,11 +309,7 @@ else:
                 else:
                     palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente"
                         
-                dados_view.append({
-                    "Partida": partida,
-                    "O Meu Palpite": palpite_mostrar,
-                    "Resultado Real": res_real
-                })
+                dados_view.append({"Partida": partida, "O Meu Palpite": palpite_mostrar, "Resultado Real": res_real})
                 
             df_view = pd.DataFrame(dados_view)
             st.table(df_view.set_index("Partida"))
@@ -333,7 +321,6 @@ else:
     # ------------------------------------------
     elif menu == "Campeão da Rodada":
         st.subheader("👑 Campeões por Rodada")
-        
         res_jogos = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
         res_usuarios = supabase.table("usuarios").select("nome").execute()
         res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
@@ -347,7 +334,6 @@ else:
             
             df_cross = df_usuarios.merge(df_jogos, how='cross')
             df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
-            
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
@@ -362,7 +348,6 @@ else:
                 df_campeoes = df_rodadas_validas[idx_max]
                 
                 col1, col2 = st.columns([1, 1])
-                
                 with col1:
                     st.write("🏆 **Ranking de Vitórias**")
                     ranking_vitorias = df_campeoes['nome'].value_counts().reset_index()
@@ -373,7 +358,6 @@ else:
                     st.write("🔎 **Consultar Vencedor por Rodada**")
                     rodadas_disponiveis = sorted(df_campeoes['rodada'].unique())
                     rodada_selecionada = st.selectbox("Escolha a Rodada", rodadas_disponiveis)
-                    
                     vencedores_desta_rodada = df_campeoes[df_campeoes['rodada'] == rodada_selecionada]
                     vencedores_desta_rodada = vencedores_desta_rodada[['nome', 'pontos']].rename(columns={"nome": "Campeão(ões)", "pontos": "Pontos Feitos"})
                     st.table(vencedores_desta_rodada.set_index("Campeão(ões)"))
@@ -385,7 +369,6 @@ else:
     # ------------------------------------------
     elif menu == "Total por Rodada":
         st.subheader("📊 Pontos Detalhados por Rodada")
-        
         res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").execute()
         res_usuarios = supabase.table("usuarios").select("nome").execute()
         res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").execute()
@@ -406,9 +389,9 @@ else:
             df_completo['pontos'] = (df_completo['palpite_clean'] == df_completo['resultado_clean']).astype(int)
             
             df_agrupado = df_completo.groupby(['nome', 'rodada'])['pontos'].sum().reset_index()
-            
             rodadas_com_jogos = df_jogos['rodada'].unique()
             df_rodadas_validas = df_agrupado[df_agrupado['rodada'].isin(rodadas_com_jogos)]
+            
             if not df_rodadas_validas.empty:
                 idx_max = df_rodadas_validas.groupby('rodada')['pontos'].transform(max) == df_rodadas_validas['pontos']
                 df_titulos = df_rodadas_validas[idx_max]['nome'].value_counts().reset_index()
@@ -425,7 +408,6 @@ else:
             df_temp = df_temp.sort_values(by=['Total', 'titulos', 'nome'], ascending=[False, False, True])
             df_pivot = df_temp.drop(columns=['titulos']).set_index('nome')
             
-            # Usando st.dataframe com altura dinâmica para congelar o NOME no telemóvel
             altura_tabela = (len(df_pivot) + 1) * 36 + 3
             st.dataframe(df_pivot, height=altura_tabela, use_container_width=True)
 
@@ -435,18 +417,16 @@ else:
     elif menu == "Ver Palpites da Galera":
         st.subheader("Quem apostou no quê?")
         rodada = st.number_input("Rodada", min_value=1, step=1, value=rodada_ativa_atual)
-        
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
         palpites = supabase.table("palpites").select("*").execute().data
         usuarios = supabase.table("usuarios").select("nome").execute().data
         
         nomes_usuarios = [u['nome'] for u in usuarios]
-        total_usuarios = len(nomes_usuarios)
         agora = datetime.now(fuso_br)
         
         if jogos:
-            # ORDENA OS JOGOS POR HORÁRIO
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+            ordem_cronologica_partidas = [f"{j['time_casa']} x {j['time_fora']}" for j in jogos]
             
             mapa_palpites = {(p['id_jogo'], p['nome_amigo']): p['palpite'] for p in palpites}
             dados_tabela = []
@@ -455,15 +435,10 @@ else:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                 passou_do_tempo = fechamento and agora >= fechamento
-                
-                votos_neste_jogo = sum(1 for nome in nomes_usuarios if (jogo['id'], nome) in mapa_palpites)
-                todos_votaram = (votos_neste_jogo == total_usuarios)
-                
                 jogo_liberado = passou_do_tempo
                 
                 for nome in nomes_usuarios:
                     palpite_real = mapa_palpites.get((jogo['id'], nome))
-                    
                     if palpite_real:
                         palpite_visivel = palpite_real if jogo_liberado else "🔒 Oculto"
                     else:
@@ -474,7 +449,9 @@ else:
             df_completo = pd.DataFrame(dados_tabela)
             tabela = df_completo.pivot_table(index="Nome", columns="Partida", values="Palpite", aggfunc='first')
             
-            # Altura calculada para tirar o scroll vertical mantendo o nome congelado no scroll lateral
+            colunas_existentes = [p for p in ordem_cronologica_partidas if p in tabela.columns]
+            tabela = tabela[colunas_existentes]
+            
             altura_tabela = (len(tabela) + 1) * 36 + 3
             st.dataframe(tabela, height=altura_tabela, use_container_width=True)
         else:
@@ -486,18 +463,14 @@ else:
     elif menu == "Resultados da Rodada":
         st.subheader("🏁 Resultados Oficiais")
         rodada = st.number_input("Selecione a Rodada", min_value=1, step=1, value=rodada_ativa_atual)
-        
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
         
         if jogos:
-            # ORDENA OS JOGOS POR HORÁRIO
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
-            
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             dados_view = []
             for jogo in jogos:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
                 res_real = jogo.get("resultado_real")
-                
                 status = res_real if res_real else "⏳ A aguardar resultado"
                 dados_view.append({"Partida": partida, "Vencedor Oficial": status})
                 
@@ -512,11 +485,10 @@ else:
     elif menu == "Pagamento":
         st.subheader("💰 Controlo de Pagamento Mensal")
         st.write("Acompanhe o estado das mensalidades (X = Pago).")
-        
         res_pagamentos = supabase.table("pagamentos").select("*").execute().data
+        
         if res_pagamentos:
             df_pag = pd.DataFrame(res_pagamentos)
-            
             colunas_map = {
                 "nome": "Participantes", "m02": "02/2026", "m03": "03/2026", "m04": "04/2026",
                 "m05": "05/2026", "m06": "06/2026", "m07": "07/2026", "m08": "08/2026",
@@ -525,7 +497,6 @@ else:
             df_pag = df_pag.rename(columns=colunas_map)
             df_pag = df_pag.sort_values(by="Participantes").reset_index(drop=True)
             
-            # NOVIDADE: Transformado em st.dataframe com altura dinâmica para congelar os "Participantes"
             altura_tabela = (len(df_pag) + 1) * 36 + 3
             st.dataframe(df_pag.set_index("Participantes"), height=altura_tabela, use_container_width=True)
         else:
@@ -536,7 +507,6 @@ else:
     # ------------------------------------------
     elif menu == "Regras e desempates":
         st.subheader("⚖️ Regras e Critérios de Desempate")
-        
         st.markdown("""
         **🏆 Campeão da Rodada** O Campeão da Rodada é aquele que obtiver a maior soma de pontos apenas nos jogos correspondentes àquela rodada específica.  
         Se houver empate no número máximo de pontos, todos os empatados são considerados "Campeões" daquela rodada.
@@ -567,36 +537,58 @@ else:
             st.divider()
 
             st.subheader("2. Registar Novo Jogo")
-            with st.form("novo_jogo"):
-                col1, col2, col3 = st.columns(3)
-                rod = col1.number_input("Rodada", min_value=1, step=1, value=rodada_ativa_atual)
-                casa = col2.text_input("Visitada")
-                fora = col3.text_input("Visitante")
-                
-                col4, col5 = st.columns(2)
-                data_jogo = col4.date_input("Data do Jogo")
-                hora_jogo = col5.time_input("Hora do Jogo", value=time(16, 0)) 
-                
-                if st.form_submit_button("Registar Partida", use_container_width=True):
-                    dt_jogo = fuso_br.localize(datetime.combine(data_jogo, hora_jogo))
-                    dt_fechamento = dt_jogo - timedelta(minutes=30)
+            # --- NOVIDADE: A Rodada foi colocada FORA do form para a tela atualizar assim que você mudar o número! ---
+            rod_novo_jogo = st.number_input("Escolha a Rodada para registar o jogo", min_value=1, step=1, value=rodada_ativa_atual, key="rod_reg")
+            
+            # Vai no banco e descobre quem JÁ ESTÁ cadastrado nesta rodada específica
+            jogos_cadastrados_nesta_rodada = supabase.table("jogos").select("time_casa, time_fora").eq("rodada", rod_novo_jogo).execute().data
+            times_ja_jogando = []
+            for j in jogos_cadastrados_nesta_rodada:
+                times_ja_jogando.extend([j['time_casa'], j['time_fora']])
+            
+            # Filtra a lista principal removendo quem já está a jogar
+            times_disponiveis = [t for t in TIMES_SERIE_A if t not in times_ja_jogando]
+            
+            if len(times_disponiveis) >= 2:
+                with st.form("novo_jogo"):
+                    col1, col2 = st.columns(2)
                     
-                    supabase.table("jogos").insert({
-                        "rodada": rod, 
-                        "time_casa": casa, 
-                        "time_fora": fora,
-                        "horario_fechamento": dt_fechamento.isoformat()
-                    }).execute()
+                    # Usa a lista filtrada (combo box), impossibilitando erros de digitação!
+                    casa = col1.selectbox("Visitado (Casa)", times_disponiveis)
+                    fora = col2.selectbox("Visitante (Fora)", times_disponiveis, index=1 if len(times_disponiveis) > 1 else 0)
                     
-                    st.success(f"Jogo registado! Limite de votação e edição: {dt_fechamento.strftime('%d/%m %H:%M')}")
+                    col4, col5 = st.columns(2)
+                    data_jogo = col4.date_input("Data do Jogo")
+                    hora_jogo = col5.time_input("Hora do Jogo", value=time(16, 0)) 
+                    
+                    if st.form_submit_button("Registar Partida", use_container_width=True):
+                        # Trava de segurança para não deixar colocar o mesmo time contra ele mesmo
+                        if casa == fora:
+                            st.error("O time de Casa e de Fora não podem ser o mesmo!")
+                        else:
+                            dt_jogo = fuso_br.localize(datetime.combine(data_jogo, hora_jogo))
+                            dt_fechamento = dt_jogo - timedelta(minutes=30)
+                            
+                            supabase.table("jogos").insert({
+                                "rodada": rod_novo_jogo, 
+                                "time_casa": casa, 
+                                "time_fora": fora,
+                                "horario_fechamento": dt_fechamento.isoformat()
+                            }).execute()
+                            
+                            st.success(f"Jogo {casa} x {fora} registado com sucesso!")
+                            # Rerun para atualizar a lista e remover esses 2 times das opções do próximo jogo
+                            st.rerun()
+            else:
+                st.info("⚽ Todos os times da Série A já estão alocados para esta rodada (10 jogos completos)!")
         
         with aba2:
             st.subheader("Lançar / Editar Resultado Final")
             rod_resultado = st.number_input("Filtrar por Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_res")
-            
             jogos_rodada = supabase.table("jogos").select("*").eq("rodada", rod_resultado).execute().data
             
             if jogos_rodada:
+                jogos_rodada = sorted(jogos_rodada, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
                 for jogo in jogos_rodada:
                     res_atual = jogo.get("resultado_real")
                     opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
@@ -624,7 +616,6 @@ else:
         with aba3:
             st.subheader("📱 Gerador de Relatórios WhatsApp")
             st.write(f"Estes relatórios baseiam-se na **Rodada {rodada_ativa_atual} (Ativa)**.")
-            
             jogos_ativos = supabase.table("jogos").select("*").eq("rodada", rodada_ativa_atual).execute().data
             
             if not jogos_ativos:
@@ -633,11 +624,9 @@ else:
                 if st.button("📋 Gerar Relatório de Faltosos", use_container_width=True):
                     todos_usuarios = supabase.table("usuarios").select("nome").execute().data
                     nomes_todos = [u['nome'] for u in todos_usuarios]
-                    
                     ids_jogos = [j['id'] for j in jogos_ativos]
                     palpites_feitos = supabase.table("palpites").select("nome_amigo").in_("id_jogo", ids_jogos).execute().data
                     nomes_votaram = set([p['nome_amigo'] for p in palpites_feitos])
-                    
                     faltosos = [nome for nome in nomes_todos if nome not in nomes_votaram]
                     
                     if faltosos:
@@ -651,7 +640,7 @@ else:
                         st.success("🎉 Todos os utilizadores já fizeram palpites nesta rodada!")
                 
                 if st.button("⚽ Gerar Agenda de Jogos", use_container_width=True):
-                    jogos_ativos_ordenados = sorted(jogos_ativos, key=lambda x: x.get('horario_fechamento') or '')
+                    jogos_ativos_ordenados = sorted(jogos_ativos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
                     msg = f"🏆 *Agenda da Rodada {rodada_ativa_atual}*\n\n"
                     for j in jogos_ativos_ordenados:
                         fechamento = converter_para_br(j['horario_fechamento'])
@@ -665,7 +654,6 @@ else:
         with aba4:
             st.subheader("💰 Gestor de Pagamentos")
             st.write("Edite diretamente a tabela abaixo. Pressione ENTER para guardar e depois clique em 'Salvar no Banco'. Digite 'X' para confirmar pago.")
-            
             usuarios = supabase.table("usuarios").select("nome").execute().data
             pagamentos = supabase.table("pagamentos").select("*").execute().data
             
@@ -682,7 +670,6 @@ else:
                 df_pagamentos = df_pagamentos.sort_values(by="nome").reset_index(drop=True)
                 
                 altura_tabela = (len(df_pagamentos) + 1) * 36 + 3
-                
                 tabela_editada = st.data_editor(
                     df_pagamentos,
                     height=altura_tabela,

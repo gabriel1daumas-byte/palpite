@@ -125,7 +125,6 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
-    # Ordem exata solicitada pelo administrador
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -168,6 +167,9 @@ else:
             
             palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
             mapa_ja_palpitou = {p['id_jogo']: p['palpite'] for p in palpites_existentes}
+            
+            # ORDENA OS JOGOS POR HORÁRIO
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
             
             jogos_abertos = []
             
@@ -294,6 +296,9 @@ else:
         meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).execute().data
         
         if jogos:
+            # ORDENA OS JOGOS POR HORÁRIO
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
+            
             agora = datetime.now(fuso_br)
             mapa_meus = {p['id_jogo']: p['palpite'] for p in meus_palpites}
             dados_view = []
@@ -309,7 +314,7 @@ else:
                 if palpite_feito:
                     palpite_mostrar = palpite_feito
                 else:
-                    palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente (Ainda pode votar/editar)"
+                    palpite_mostrar = "Empate (Auto)" if jogo_fechado else "Pendente"
                         
                 dados_view.append({
                     "Partida": partida,
@@ -433,18 +438,25 @@ else:
         usuarios = supabase.table("usuarios").select("nome").execute().data
         
         nomes_usuarios = [u['nome'] for u in usuarios]
+        total_usuarios = len(nomes_usuarios)
         agora = datetime.now(fuso_br)
         
         if jogos:
+            # ORDENA OS JOGOS POR HORÁRIO
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
+            
             mapa_palpites = {(p['id_jogo'], p['nome_amigo']): p['palpite'] for p in palpites}
             dados_tabela = []
             
             for jogo in jogos:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
+                passou_do_tempo = fechamento and agora >= fechamento
                 
-                # A lógica agora é simples: o jogo só é liberado se a hora atual já passou da hora de fechamento.
-                jogo_liberado = fechamento and agora >= fechamento
+                votos_neste_jogo = sum(1 for nome in nomes_usuarios if (jogo['id'], nome) in mapa_palpites)
+                todos_votaram = (votos_neste_jogo == total_usuarios)
+                
+                jogo_liberado = passou_do_tempo
                 
                 for nome in nomes_usuarios:
                     palpite_real = mapa_palpites.get((jogo['id'], nome))
@@ -452,14 +464,17 @@ else:
                     if palpite_real:
                         palpite_visivel = palpite_real if jogo_liberado else "🔒 Oculto"
                     else:
-                        palpite_visivel = "Empate (Auto)" if jogo_liberado else "Pendente"
+                        palpite_visivel = "Empate (Auto)" if passou_do_tempo else "Pendente"
                         
                     dados_tabela.append({"Nome": nome, "Partida": partida, "Palpite": palpite_visivel})
                     
             df_completo = pd.DataFrame(dados_tabela)
             tabela = df_completo.pivot_table(index="Nome", columns="Partida", values="Palpite", aggfunc='first')
             
-            st.table(tabela)
+            # NOVIDADE: Voltamos ao st.dataframe apenas aqui, com altura calculada para tirar o scroll vertical.
+            # O st.dataframe automaticamente congela a primeira coluna (Nome) quando há scroll lateral no celular!
+            altura_tabela = (len(tabela) + 1) * 36 + 3
+            st.dataframe(tabela, height=altura_tabela, use_container_width=True)
         else:
             st.info("Sem dados para exibir.")
 
@@ -473,6 +488,9 @@ else:
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
         
         if jogos:
+            # ORDENA OS JOGOS POR HORÁRIO
+            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '')
+            
             dados_view = []
             for jogo in jogos:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
@@ -629,8 +647,9 @@ else:
                         st.success("🎉 Todos os utilizadores já fizeram palpites nesta rodada!")
                 
                 if st.button("⚽ Gerar Agenda de Jogos", use_container_width=True):
+                    jogos_ativos_ordenados = sorted(jogos_ativos, key=lambda x: x.get('horario_fechamento') or '')
                     msg = f"🏆 *Agenda da Rodada {rodada_ativa_atual}*\n\n"
-                    for j in jogos_ativos:
+                    for j in jogos_ativos_ordenados:
                         fechamento = converter_para_br(j['horario_fechamento'])
                         hora_jogo = fechamento + timedelta(minutes=30)
                         msg += f"⚽ {j['time_casa']} x {j['time_fora']}\n"

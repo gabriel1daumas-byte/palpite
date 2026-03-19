@@ -125,6 +125,7 @@ else:
 
     rodada_ativa_atual = get_rodada_ativa()
 
+    # Ordem exata solicitada pelo administrador
     opcoes_menu = [
         "Fazer Palpites", 
         "Classificação", 
@@ -424,7 +425,9 @@ else:
             df_temp = df_temp.sort_values(by=['Total', 'titulos', 'nome'], ascending=[False, False, True])
             df_pivot = df_temp.drop(columns=['titulos']).set_index('nome')
             
-            st.table(df_pivot)
+            # Usando st.dataframe com altura dinâmica para congelar o NOME no telemóvel
+            altura_tabela = (len(df_pivot) + 1) * 36 + 3
+            st.dataframe(df_pivot, height=altura_tabela, use_container_width=True)
 
     # ------------------------------------------
     # 6. VER PALPITES DA GALERA
@@ -471,8 +474,7 @@ else:
             df_completo = pd.DataFrame(dados_tabela)
             tabela = df_completo.pivot_table(index="Nome", columns="Partida", values="Palpite", aggfunc='first')
             
-            # NOVIDADE: Voltamos ao st.dataframe apenas aqui, com altura calculada para tirar o scroll vertical.
-            # O st.dataframe automaticamente congela a primeira coluna (Nome) quando há scroll lateral no celular!
+            # Altura calculada para tirar o scroll vertical mantendo o nome congelado no scroll lateral
             altura_tabela = (len(tabela) + 1) * 36 + 3
             st.dataframe(tabela, height=altura_tabela, use_container_width=True)
         else:
@@ -523,7 +525,9 @@ else:
             df_pag = df_pag.rename(columns=colunas_map)
             df_pag = df_pag.sort_values(by="Participantes").reset_index(drop=True)
             
-            st.table(df_pag.set_index("Participantes"))
+            # NOVIDADE: Transformado em st.dataframe com altura dinâmica para congelar os "Participantes"
+            altura_tabela = (len(df_pag) + 1) * 36 + 3
+            st.dataframe(df_pag.set_index("Participantes"), height=altura_tabela, use_container_width=True)
         else:
             st.info("Ainda não existem registos de pagamento na base de dados. O Administrador precisa de inicializar a tabela.")
 

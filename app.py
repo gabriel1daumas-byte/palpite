@@ -34,6 +34,38 @@ def init_connection():
 supabase = init_connection()
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
+# --- FUNÇÕES DE SUPORTE E PAGINAÇÃO (BLINDAGEM CONTRA O LIMITE DE 1000 LINHAS) ---
+def buscar_todos_palpites(filtro_ids_jogos=None):
+    """Bypass no limite de 1000 linhas do Supabase puxando em lotes de 1000"""
+    dados = []
+    inicio = 0
+    while True:
+        query = supabase.table("palpites").select("*")
+        if filtro_ids_jogos is not None:
+            if len(filtro_ids_jogos) == 0:
+                return []
+            query = query.in_("id_jogo", filtro_ids_jogos)
+            
+        res = query.range(inicio, inicio + 999).execute()
+        dados.extend(res.data)
+        
+        if len(res.data) < 1000:
+            break
+        inicio += 1000
+    return dados
+
+def buscar_todos_jogos_encerrados():
+    """Garante que traz todos os jogos finalizados do campeonato, sem limite"""
+    dados = []
+    inicio = 0
+    while True:
+        res = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").range(inicio, inicio + 999).execute()
+        dados.extend(res.data)
+        if len(res.data) < 1000:
+            break
+        inicio += 1000
+    return dados
+
 def converter_para_br(data_string):
     if data_string.endswith('Z'):
         data_string = data_string[:-1] + '+00:00'
@@ -168,7 +200,8 @@ else:
             agora = datetime.now(fuso_br)
             ids_jogos_rodada = [j['id'] for j in jogos]
             
-            palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).limit(10000).execute().data
+            # Aqui é só os palpites da pessoa ativa na rodada atual, não chega a 10 nunca
+            palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
             mapa_ja_palpitou = {str(p['id_jogo']).strip(): p['palpite'] for p in palpites_existentes}
             
             jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
@@ -239,18 +272,18 @@ else:
     # ------------------------------------------
     elif menu == "Classificação":
         st.subheader("🏆 Ranking Global")
-        res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").limit(10000).execute()
-        res_usuarios = supabase.table("usuarios").select("nome").execute()
-        res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").limit(10000).execute()
+        res_jogos_encerrados = buscar_todos_jogos_encerrados()
+        res_usuarios = supabase.table("usuarios").select("nome").execute().data
+        res_palpites = buscar_todos_palpites()
         
-        if not res_jogos_encerrados.data:
+        if not res_jogos_encerrados:
             st.info("Ainda não há resultados finais lançados para contabilizar pontos.")
         else:
-            df_jogos = pd.DataFrame(res_jogos_encerrados.data)
-            df_usuarios = pd.DataFrame(res_usuarios.data)
-            df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
+            df_jogos = pd.DataFrame(res_jogos_encerrados)
+            df_usuarios = pd.DataFrame(res_usuarios)
+            df_palpites = pd.DataFrame(res_palpites) if res_palpites else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            # BLINDAGEM ABSOLUTA: Normaliza nomes (espaços/maiúsculas) e remove votos duplos gravados com bug antigo
+            # Normalização para blindar e remover votos duplos
             df_usuarios['join_nome'] = df_usuarios['nome'].astype(str).str.strip().str.lower()
             df_jogos['join_id'] = df_jogos['id'].astype(str).str.strip()
             
@@ -301,9 +334,10 @@ else:
         
         if jogos:
             ids_jogos = [j['id'] for j in jogos]
+            # Aqui é seguro usar o Execute direto, porque 10 jogos no máximo dá 10 linhas pro utilizador logado
             meus_palpites = []
             if ids_jogos:
-                meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos).limit(10000).execute().data
+                meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos).execute().data
             
             jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             agora = datetime.now(fuso_br)
@@ -335,16 +369,16 @@ else:
     # ------------------------------------------
     elif menu == "Campeão da Rodada":
         st.subheader("👑 Campeões por Rodada")
-        res_jogos = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").limit(10000).execute()
-        res_usuarios = supabase.table("usuarios").select("nome").execute()
-        res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").limit(10000).execute()
+        res_jogos = buscar_todos_jogos_encerrados()
+        res_usuarios = supabase.table("usuarios").select("nome").execute().data
+        res_palpites = buscar_todos_palpites()
         
-        if not res_jogos.data:
+        if not res_jogos:
             st.info("Ainda não há jogos finalizados para determinar campeões.")
         else:
-            df_jogos = pd.DataFrame(res_jogos.data)
-            df_usuarios = pd.DataFrame(res_usuarios.data)
-            df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
+            df_jogos = pd.DataFrame(res_jogos)
+            df_usuarios = pd.DataFrame(res_usuarios)
+            df_palpites = pd.DataFrame(res_palpites) if res_palpites else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
             df_usuarios['join_nome'] = df_usuarios['nome'].astype(str).str.strip().str.lower()
             df_jogos['join_id'] = df_jogos['id'].astype(str).str.strip()
@@ -359,7 +393,6 @@ else:
             
             df_cross = df_usuarios.merge(df_jogos, how='cross')
             df_completo = df_cross.merge(df_palpites, on=['join_nome', 'join_id'], how='left')
-            
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
@@ -395,16 +428,16 @@ else:
     # ------------------------------------------
     elif menu == "Total por Rodada":
         st.subheader("📊 Pontos Detalhados por Rodada")
-        res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").limit(10000).execute()
-        res_usuarios = supabase.table("usuarios").select("nome").execute()
-        res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").limit(10000).execute()
+        res_jogos_encerrados = buscar_todos_jogos_encerrados()
+        res_usuarios = supabase.table("usuarios").select("nome").execute().data
+        res_palpites = buscar_todos_palpites()
         
-        if not res_jogos_encerrados.data:
+        if not res_jogos_encerrados:
             st.info("Ainda não há resultados finais lançados para contabilizar pontos.")
         else:
-            df_jogos = pd.DataFrame(res_jogos_encerrados.data)
-            df_usuarios = pd.DataFrame(res_usuarios.data)
-            df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
+            df_jogos = pd.DataFrame(res_jogos_encerrados)
+            df_usuarios = pd.DataFrame(res_usuarios)
+            df_palpites = pd.DataFrame(res_palpites) if res_palpites else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
             df_usuarios['join_nome'] = df_usuarios['nome'].astype(str).str.strip().str.lower()
             df_jogos['join_id'] = df_jogos['id'].astype(str).str.strip()
@@ -465,9 +498,8 @@ else:
             ids_jogos = [j['id'] for j in jogos]
             ordem_cronologica_partidas = [f"{j['time_casa']} x {j['time_fora']}" for j in jogos]
             
-            palpites = []
-            if ids_jogos:
-                palpites = supabase.table("palpites").select("*").in_("id_jogo", ids_jogos).limit(10000).execute().data
+            # Chama a função de paginação para não ter corte na rodada!
+            palpites = buscar_todos_palpites(filtro_ids_jogos=ids_jogos)
             
             # Removemos letras maiúsculas e espaços de segurança também aqui
             mapa_palpites = {(str(p['id_jogo']).strip(), str(p['nome_amigo']).strip().lower()): p['palpite'] for p in palpites}
@@ -527,6 +559,7 @@ else:
     elif menu == "Pagamento":
         st.subheader("💰 Controlo de Pagamento Mensal")
         st.write("Acompanhe o estado das mensalidades (X = Pago).")
+        # Pagamento dificilmente passa de 1000 linhas, mas mantive o limit 10000 se o DB for flexível depois
         res_pagamentos = supabase.table("pagamentos").select("*").limit(10000).execute().data
         
         if res_pagamentos:
@@ -661,9 +694,8 @@ else:
                     nomes_todos = [u['nome'] for u in todos_usuarios]
                     ids_jogos = [j['id'] for j in jogos_ativos]
                     
-                    palpites_feitos = []
-                    if ids_jogos:
-                        palpites_feitos = supabase.table("palpites").select("nome_amigo").in_("id_jogo", ids_jogos).limit(10000).execute().data
+                    # Usa a nossa super função aqui também
+                    palpites_feitos = buscar_todos_palpites(filtro_ids_jogos=ids_jogos)
                         
                     nomes_votaram = set([p['nome_amigo'] for p in palpites_feitos])
                     faltosos = [nome for nome in nomes_todos if nome not in nomes_votaram]

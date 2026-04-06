@@ -168,10 +168,8 @@ else:
             agora = datetime.now(fuso_br)
             ids_jogos_rodada = [j['id'] for j in jogos]
             
-            # Limite expandido para não haver chance de perder o palpite
             palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).limit(10000).execute().data
-            
-            mapa_ja_palpitou = {str(p['id_jogo']): p['palpite'] for p in palpites_existentes}
+            mapa_ja_palpitou = {str(p['id_jogo']).strip(): p['palpite'] for p in palpites_existentes}
             
             jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             
@@ -197,7 +195,7 @@ else:
                             hora_jogo = fechamento + timedelta(minutes=30)
                             st.caption(f"🕒 **Jogo às:** {hora_jogo.strftime('%H:%M')} | ⏳ **Fecha palpites às:** {fechamento.strftime('%H:%M')}")
                             
-                        palpite_atual = mapa_ja_palpitou.get(str(jogo['id']))
+                        palpite_atual = mapa_ja_palpitou.get(str(jogo['id']).strip())
                         idx_atual = opcoes.index(palpite_atual) if palpite_atual in opcoes else 1
                         
                         escolha = st.selectbox("Vencedor:", opcoes, index=idx_atual, key=f"jogo_{jogo['id']}")
@@ -211,8 +209,8 @@ else:
                         salvou_algum = False
                         
                         for id_jogo, novo_palpite in palpites_feitos.items():
-                            id_jogo_str = str(id_jogo)
-                            jogo_info = next(j for j in jogos_abertos if str(j['id']) == id_jogo_str)
+                            id_jogo_str = str(id_jogo).strip()
+                            jogo_info = next(j for j in jogos_abertos if str(j['id']).strip() == id_jogo_str)
                             fechamento_seguro = converter_para_br(jogo_info['horario_fechamento']) if jogo_info.get('horario_fechamento') else None
                             
                             if fechamento_seguro and agora_submit >= fechamento_seguro:
@@ -241,7 +239,6 @@ else:
     # ------------------------------------------
     elif menu == "Classificação":
         st.subheader("🏆 Ranking Global")
-        # BLINDAGEM 1000 LINHAS NO RANKING
         res_jogos_encerrados = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").limit(10000).execute()
         res_usuarios = supabase.table("usuarios").select("nome").execute()
         res_palpites = supabase.table("palpites").select("nome_amigo, id_jogo, palpite").limit(10000).execute()
@@ -253,12 +250,20 @@ else:
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            df_jogos['id'] = df_jogos['id'].astype(str)
+            # BLINDAGEM ABSOLUTA: Normaliza nomes (espaços/maiúsculas) e remove votos duplos gravados com bug antigo
+            df_usuarios['join_nome'] = df_usuarios['nome'].astype(str).str.strip().str.lower()
+            df_jogos['join_id'] = df_jogos['id'].astype(str).str.strip()
+            
             if not df_palpites.empty:
-                df_palpites['id_jogo'] = df_palpites['id_jogo'].astype(str)
+                df_palpites['join_nome'] = df_palpites['nome_amigo'].astype(str).str.strip().str.lower()
+                df_palpites['join_id'] = df_palpites['id_jogo'].astype(str).str.strip()
+                df_palpites = df_palpites.drop_duplicates(subset=['join_nome', 'join_id'], keep='last')
+            else:
+                df_palpites['join_nome'] = pd.Series(dtype='str')
+                df_palpites['join_id'] = pd.Series(dtype='str')
             
             df_cross = df_usuarios.merge(df_jogos, how='cross')
-            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
+            df_completo = df_cross.merge(df_palpites, on=['join_nome', 'join_id'], how='left')
             
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
@@ -296,14 +301,14 @@ else:
         
         if jogos:
             ids_jogos = [j['id'] for j in jogos]
-            # Puxa só os palpites desta rodada para não sobrecarregar
             meus_palpites = []
             if ids_jogos:
                 meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos).limit(10000).execute().data
             
             jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             agora = datetime.now(fuso_br)
-            mapa_meus = {str(p['id_jogo']): p['palpite'] for p in meus_palpites}
+            
+            mapa_meus = {str(p['id_jogo']).strip(): p['palpite'] for p in meus_palpites}
             dados_view = []
             
             for jogo in jogos:
@@ -311,7 +316,7 @@ else:
                 res_real = jogo.get("resultado_real") or "A aguardar..."
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                 jogo_fechado = fechamento and agora >= fechamento
-                palpite_feito = mapa_meus.get(str(jogo['id']))
+                palpite_feito = mapa_meus.get(str(jogo['id']).strip())
                 
                 if palpite_feito:
                     palpite_mostrar = palpite_feito
@@ -341,12 +346,20 @@ else:
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            df_jogos['id'] = df_jogos['id'].astype(str)
+            df_usuarios['join_nome'] = df_usuarios['nome'].astype(str).str.strip().str.lower()
+            df_jogos['join_id'] = df_jogos['id'].astype(str).str.strip()
+            
             if not df_palpites.empty:
-                df_palpites['id_jogo'] = df_palpites['id_jogo'].astype(str)
+                df_palpites['join_nome'] = df_palpites['nome_amigo'].astype(str).str.strip().str.lower()
+                df_palpites['join_id'] = df_palpites['id_jogo'].astype(str).str.strip()
+                df_palpites = df_palpites.drop_duplicates(subset=['join_nome', 'join_id'], keep='last')
+            else:
+                df_palpites['join_nome'] = pd.Series(dtype='str')
+                df_palpites['join_id'] = pd.Series(dtype='str')
             
             df_cross = df_usuarios.merge(df_jogos, how='cross')
-            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
+            df_completo = df_cross.merge(df_palpites, on=['join_nome', 'join_id'], how='left')
+            
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
             df_completo['resultado_clean'] = df_completo['resultado_real'].astype(str).str.strip().str.lower()
@@ -393,12 +406,19 @@ else:
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            df_jogos['id'] = df_jogos['id'].astype(str)
+            df_usuarios['join_nome'] = df_usuarios['nome'].astype(str).str.strip().str.lower()
+            df_jogos['join_id'] = df_jogos['id'].astype(str).str.strip()
+            
             if not df_palpites.empty:
-                df_palpites['id_jogo'] = df_palpites['id_jogo'].astype(str)
+                df_palpites['join_nome'] = df_palpites['nome_amigo'].astype(str).str.strip().str.lower()
+                df_palpites['join_id'] = df_palpites['id_jogo'].astype(str).str.strip()
+                df_palpites = df_palpites.drop_duplicates(subset=['join_nome', 'join_id'], keep='last')
+            else:
+                df_palpites['join_nome'] = pd.Series(dtype='str')
+                df_palpites['join_id'] = pd.Series(dtype='str')
             
             df_cross = df_usuarios.merge(df_jogos, how='cross')
-            df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
+            df_completo = df_cross.merge(df_palpites, on=['join_nome', 'join_id'], how='left')
             
             df_completo['palpite'] = df_completo['palpite'].fillna('Empate')
             df_completo['palpite_clean'] = df_completo['palpite'].astype(str).str.strip().str.lower()
@@ -445,12 +465,12 @@ else:
             ids_jogos = [j['id'] for j in jogos]
             ordem_cronologica_partidas = [f"{j['time_casa']} x {j['time_fora']}" for j in jogos]
             
-            # Aqui filtramos EXATAMENTE pelos jogos da rodada selecionada!
             palpites = []
             if ids_jogos:
                 palpites = supabase.table("palpites").select("*").in_("id_jogo", ids_jogos).limit(10000).execute().data
             
-            mapa_palpites = {(str(p['id_jogo']), str(p['nome_amigo']).strip()): p['palpite'] for p in palpites}
+            # Removemos letras maiúsculas e espaços de segurança também aqui
+            mapa_palpites = {(str(p['id_jogo']).strip(), str(p['nome_amigo']).strip().lower()): p['palpite'] for p in palpites}
             dados_tabela = []
             
             for jogo in jogos:
@@ -460,7 +480,7 @@ else:
                 jogo_liberado = passou_do_tempo
                 
                 for nome in nomes_usuarios:
-                    palpite_real = mapa_palpites.get((str(jogo['id']), str(nome).strip()))
+                    palpite_real = mapa_palpites.get((str(jogo['id']).strip(), str(nome).strip().lower()))
                     if palpite_real:
                         palpite_visivel = palpite_real if jogo_liberado else "🔒 Oculto"
                     else:

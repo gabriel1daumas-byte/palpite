@@ -10,13 +10,13 @@ st.set_page_config(page_title="Bolão da Galera", page_icon="🏆", layout="wide
 
 # LISTA OFICIAL DE TIMES DA SÉRIE A - 2026
 TIMES_SERIE_A = sorted([
-    "Atlético-MG" ,"Athletico-PR", "Bahia", "Botafogo", "Bragantino",
+    "Athletico-PR", "Atlético-MG", "Bahia", "Botafogo", "Bragantino",
     "Chapecoense", "Corinthians", "Coritiba", "Cruzeiro", "Flamengo",
     "Fluminense", "Grêmio", "Internacional", "Mirassol", "Palmeiras",
     "Remo", "Santos", "São Paulo", "Vasco", "Vitória"
 ])
 
-# Truque de CSS para forçar o Combo (Selectbox) da barra lateral a mostrar todos os itens sem scroll
+# Truque de CSS para forçar o Combo sem scroll
 st.markdown("""
     <style>
     div[data-baseweb="popover"] ul {
@@ -48,7 +48,6 @@ def get_rodada_ativa():
         pass
     return 1
 
-# --- FUNÇÕES PARA PROTEGER A SESSÃO NA URL ---
 def codificar_sessao(email):
     return base64.b64encode(email.encode()).decode()
 
@@ -58,14 +57,12 @@ def decodificar_sessao(codigo):
     except:
         return None
 
-# --- CONTROLO DE SESSÃO À PROVA DE F5 ---
 if "logado" not in st.session_state:
     st.session_state.logado = False
     st.session_state.nome_usuario = ""
     st.session_state.email_usuario = ""
     st.session_state.is_admin = False
 
-# Lê a URL imediatamente após o F5
 if "sessao" in st.query_params and not st.session_state.logado:
     email_decodificado = decodificar_sessao(st.query_params["sessao"])
     if email_decodificado:
@@ -78,7 +75,7 @@ if "sessao" in st.query_params and not st.session_state.logado:
             st.session_state.is_admin = usuario.get('is_admin', False)
 
 # ==========================================
-# ECRÃ DE ACESSO (LOGIN UNIFICADO)
+# ECRÃ DE ACESSO
 # ==========================================
 if not st.session_state.logado:
     st.title("🔒 Acesso ao Bolão")
@@ -87,7 +84,6 @@ if not st.session_state.logado:
     with st.form("form_login_unificado"):
         email_digitado = st.text_input("E-mail", autocomplete="username")
         senha_digitada = st.text_input("Palavra-passe", type="password", autocomplete="current-password")
-        
         submit = st.form_submit_button("Entrar", use_container_width=True)
         
         if submit:
@@ -101,7 +97,6 @@ if not st.session_state.logado:
                     if not usuario.get("senha"):
                         supabase.table("usuarios").update({"senha": senha_digitada}).eq("email", email_limpo).execute()
                         st.success("Primeiro acesso detetado! Palavra-passe registada.")
-                        
                         st.query_params["sessao"] = codificar_sessao(email_limpo)
                         st.session_state.logado = True
                         st.session_state.nome_usuario = usuario['nome']
@@ -174,7 +169,9 @@ else:
             ids_jogos_rodada = [j['id'] for j in jogos]
             
             palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
-            mapa_ja_palpitou = {p['id_jogo']: p['palpite'] for p in palpites_existentes}
+            
+            # BLINDAGEM 1: Converter id_jogo para texto para garantir o match exato
+            mapa_ja_palpitou = {str(p['id_jogo']): p['palpite'] for p in palpites_existentes}
             
             jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             
@@ -200,8 +197,10 @@ else:
                             hora_jogo = fechamento + timedelta(minutes=30)
                             st.caption(f"🕒 **Jogo às:** {hora_jogo.strftime('%H:%M')} | ⏳ **Fecha palpites às:** {fechamento.strftime('%H:%M')}")
                             
-                        palpite_atual = mapa_ja_palpitou.get(jogo['id'])
+                        # Procura no dicionário usando a versão em texto do ID do jogo
+                        palpite_atual = mapa_ja_palpitou.get(str(jogo['id']))
                         idx_atual = opcoes.index(palpite_atual) if palpite_atual in opcoes else 1
+                        
                         escolha = st.selectbox("Vencedor:", opcoes, index=idx_atual, key=f"jogo_{jogo['id']}")
                         palpites_feitos[jogo['id']] = escolha
                         st.write("---")
@@ -213,15 +212,16 @@ else:
                         salvou_algum = False
                         
                         for id_jogo, novo_palpite in palpites_feitos.items():
-                            jogo_info = next(j for j in jogos_abertos if j['id'] == id_jogo)
+                            id_jogo_str = str(id_jogo)
+                            jogo_info = next(j for j in jogos_abertos if str(j['id']) == id_jogo_str)
                             fechamento_seguro = converter_para_br(jogo_info['horario_fechamento']) if jogo_info.get('horario_fechamento') else None
                             
                             if fechamento_seguro and agora_submit >= fechamento_seguro:
                                 st.error(f"⚠️ O tempo para o jogo {jogo_info['time_casa']} x {jogo_info['time_fora']} acabou enquanto preenchia! O palpite não foi aceite.")
                                 continue
                                 
-                            if mapa_ja_palpitou.get(id_jogo) != novo_palpite:
-                                if id_jogo in mapa_ja_palpitou:
+                            if mapa_ja_palpitou.get(id_jogo_str) != novo_palpite:
+                                if id_jogo_str in mapa_ja_palpitou:
                                     supabase.table("palpites").update({"palpite": novo_palpite}).eq("nome_amigo", st.session_state.nome_usuario).eq("id_jogo", id_jogo).execute()
                                 else:
                                     supabase.table("palpites").insert({
@@ -252,6 +252,11 @@ else:
             df_jogos = pd.DataFrame(res_jogos_encerrados.data)
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
+            
+            # Forçar os IDs a serem do mesmo tipo (string) antes de fazer o merge para não perder pontos
+            df_jogos['id'] = df_jogos['id'].astype(str)
+            if not df_palpites.empty:
+                df_palpites['id_jogo'] = df_palpites['id_jogo'].astype(str)
             
             df_cross = df_usuarios.merge(df_jogos, how='cross')
             df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
@@ -294,7 +299,9 @@ else:
         if jogos:
             jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             agora = datetime.now(fuso_br)
-            mapa_meus = {p['id_jogo']: p['palpite'] for p in meus_palpites}
+            
+            # BLINDAGEM 2: Converter o id_jogo para texto
+            mapa_meus = {str(p['id_jogo']): p['palpite'] for p in meus_palpites}
             dados_view = []
             
             for jogo in jogos:
@@ -302,7 +309,9 @@ else:
                 res_real = jogo.get("resultado_real") or "A aguardar..."
                 fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                 jogo_fechado = fechamento and agora >= fechamento
-                palpite_feito = mapa_meus.get(jogo['id'])
+                
+                # Procura como texto para garantir que encontra
+                palpite_feito = mapa_meus.get(str(jogo['id']))
                 
                 if palpite_feito:
                     palpite_mostrar = palpite_feito
@@ -331,6 +340,10 @@ else:
             df_jogos = pd.DataFrame(res_jogos.data)
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
+            
+            df_jogos['id'] = df_jogos['id'].astype(str)
+            if not df_palpites.empty:
+                df_palpites['id_jogo'] = df_palpites['id_jogo'].astype(str)
             
             df_cross = df_usuarios.merge(df_jogos, how='cross')
             df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
@@ -380,6 +393,10 @@ else:
             df_usuarios = pd.DataFrame(res_usuarios.data)
             df_palpites = pd.DataFrame(res_palpites.data) if res_palpites.data else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
+            df_jogos['id'] = df_jogos['id'].astype(str)
+            if not df_palpites.empty:
+                df_palpites['id_jogo'] = df_palpites['id_jogo'].astype(str)
+            
             df_cross = df_usuarios.merge(df_jogos, how='cross')
             df_completo = df_cross.merge(df_palpites, left_on=['nome', 'id'], right_on=['nome_amigo', 'id_jogo'], how='left')
             
@@ -428,7 +445,8 @@ else:
             jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
             ordem_cronologica_partidas = [f"{j['time_casa']} x {j['time_fora']}" for j in jogos]
             
-            mapa_palpites = {(p['id_jogo'], p['nome_amigo']): p['palpite'] for p in palpites}
+            # BLINDAGEM 3: Converter o ID para texto E remover possíveis espaços invisíveis dos nomes
+            mapa_palpites = {(str(p['id_jogo']), str(p['nome_amigo']).strip()): p['palpite'] for p in palpites}
             dados_tabela = []
             
             for jogo in jogos:
@@ -438,7 +456,9 @@ else:
                 jogo_liberado = passou_do_tempo
                 
                 for nome in nomes_usuarios:
-                    palpite_real = mapa_palpites.get((jogo['id'], nome))
+                    # Busca garantindo que ID é texto e Nomes estão limpos
+                    palpite_real = mapa_palpites.get((str(jogo['id']), str(nome).strip()))
+                    
                     if palpite_real:
                         palpite_visivel = palpite_real if jogo_liberado else "🔒 Oculto"
                     else:
@@ -537,23 +557,18 @@ else:
             st.divider()
 
             st.subheader("2. Registar Novo Jogo")
-            # --- NOVIDADE: A Rodada foi colocada FORA do form para a tela atualizar assim que você mudar o número! ---
             rod_novo_jogo = st.number_input("Escolha a Rodada para registar o jogo", min_value=1, step=1, value=rodada_ativa_atual, key="rod_reg")
             
-            # Vai no banco e descobre quem JÁ ESTÁ cadastrado nesta rodada específica
             jogos_cadastrados_nesta_rodada = supabase.table("jogos").select("time_casa, time_fora").eq("rodada", rod_novo_jogo).execute().data
             times_ja_jogando = []
             for j in jogos_cadastrados_nesta_rodada:
                 times_ja_jogando.extend([j['time_casa'], j['time_fora']])
             
-            # Filtra a lista principal removendo quem já está a jogar
             times_disponiveis = [t for t in TIMES_SERIE_A if t not in times_ja_jogando]
             
             if len(times_disponiveis) >= 2:
                 with st.form("novo_jogo"):
                     col1, col2 = st.columns(2)
-                    
-                    # Usa a lista filtrada (combo box), impossibilitando erros de digitação!
                     casa = col1.selectbox("Visitado (Casa)", times_disponiveis)
                     fora = col2.selectbox("Visitante (Fora)", times_disponiveis, index=1 if len(times_disponiveis) > 1 else 0)
                     
@@ -562,7 +577,6 @@ else:
                     hora_jogo = col5.time_input("Hora do Jogo", value=time(16, 0)) 
                     
                     if st.form_submit_button("Registar Partida", use_container_width=True):
-                        # Trava de segurança para não deixar colocar o mesmo time contra ele mesmo
                         if casa == fora:
                             st.error("O time de Casa e de Fora não podem ser o mesmo!")
                         else:
@@ -577,7 +591,6 @@ else:
                             }).execute()
                             
                             st.success(f"Jogo {casa} x {fora} registado com sucesso!")
-                            # Rerun para atualizar a lista e remover esses 2 times das opções do próximo jogo
                             st.rerun()
             else:
                 st.info("⚽ Todos os times da Série A já estão alocados para esta rodada (10 jogos completos)!")

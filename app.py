@@ -57,7 +57,7 @@ def buscar_todos_jogos_encerrados():
     dados = []
     inicio = 0
     while True:
-        res = supabase.table("jogos").select("id, rodada, resultado_real").not_.is_("resultado_real", "null").range(inicio, inicio + 999).execute()
+        res = supabase.table("jogos").select("*").not_.is_("resultado_real", "null").range(inicio, inicio + 999).execute()
         dados.extend(res.data)
         if len(res.data) < 1000:
             break
@@ -217,7 +217,13 @@ else:
                 with st.form("form_palpites"):
                     palpites_feitos = {}
                     for jogo in jogos_abertos:
-                        st.write(f"⚽ **{jogo['time_casa']} x {jogo['time_fora']}**")
+                        # Exibe a odd formatada se existir no banco
+                        odd_c_texto = f" (Odd: {jogo.get('odd_casa'):.2f})" if jogo.get('odd_casa') else ""
+                        odd_e_texto = f" (Odd: {jogo.get('odd_empate'):.2f})" if jogo.get('odd_empate') else ""
+                        odd_f_texto = f" (Odd: {jogo.get('odd_fora'):.2f})" if jogo.get('odd_fora') else ""
+                        
+                        st.write(f"⚽ **{jogo['time_casa']}{odd_c_texto} x {jogo['time_fora']}{odd_f_texto}**")
+                        
                         opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
                         fechamento = converter_para_br(jogo['horario_fechamento']) if jogo.get('horario_fechamento') else None
                         
@@ -595,7 +601,9 @@ else:
     # 10. ADMIN
     # ------------------------------------------
     elif menu == "⚙️ Admin":
-        aba1, aba2, aba_odds, aba_fin, aba3, aba4 = st.tabs(["Partidas", "Resultados", "📈 Lançar Odds", "💲 Financeiro", "Relatórios", "Pagamentos"])
+        aba1, aba2, aba_odds, aba_fin, aba_resumo, aba3, aba4 = st.tabs([
+            "Partidas", "Resultados", "📈 Odds", "💲 Financeiro", "📊 Resumo", "Relatórios", "Pagamentos"
+        ])
         
         with aba1:
             st.subheader("1. Definir Rodada Ativa")
@@ -695,9 +703,9 @@ else:
                         val_e = float(jogo.get('odd_empate') or 1.00)
                         val_f = float(jogo.get('odd_fora') or 1.00)
                         
-                        odd_c = col_c.number_input(f"Casa ({jogo['time_casa']})", min_value=1.0, step=0.01, value=val_c, key=f"odd_c_{jogo['id']}")
-                        odd_e = col_e.number_input("Empate", min_value=1.0, step=0.01, value=val_e, key=f"odd_e_{jogo['id']}")
-                        odd_f = col_f.number_input(f"Fora ({jogo['time_fora']})", min_value=1.0, step=0.01, value=val_f, key=f"odd_f_{jogo['id']}")
+                        odd_c = col_c.number_input(f"Casa ({jogo['time_casa']})", min_value=1.0, step=0.01, value=val_c, format="%.2f", key=f"odd_c_{jogo['id']}")
+                        odd_e = col_e.number_input("Empate", min_value=1.0, step=0.01, value=val_e, format="%.2f", key=f"odd_e_{jogo['id']}")
+                        odd_f = col_f.number_input(f"Fora ({jogo['time_fora']})", min_value=1.0, step=0.01, value=val_f, format="%.2f", key=f"odd_f_{jogo['id']}")
                         
                         odds_atualizadas[jogo['id']] = {"odd_casa": odd_c, "odd_empate": odd_e, "odd_fora": odd_f}
                         st.write("---")
@@ -714,19 +722,17 @@ else:
             else:
                 st.write("Nenhum jogo registado para esta rodada.")
 
-        # --- NOVA ABA: FINANCEIRO ---
         with aba_fin:
-            st.subheader("💲 Projeção Financeira por Partida")
+            st.subheader("💲 Projeção e Resultado Financeiro")
             rod_fin = st.number_input("Escolha a Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_fin")
             
-            # Conta os participantes automaticamente direto do banco de dados
             usuarios_fin = supabase.table("usuarios").select("id").execute().data
             total_participantes = len(usuarios_fin) if usuarios_fin else 1
             
-            valor_total_jogo = st.number_input("Valor Total Arrecadado por Jogo (R$):", min_value=1.0, value=110.0, step=10.0)
+            valor_total_jogo = st.number_input("Valor Total Arrecadado por Jogo (R$):", min_value=1.0, value=110.0, step=10.0, key="cfg_fin_valor")
             valor_aposta = valor_total_jogo / total_participantes
             
-            st.caption(f"ℹ️ Baseado em {total_participantes} participantes cadastrados, o valor de cada palpite equivale a **R$ {valor_aposta:.2f}**.")
+            st.caption(f"ℹ️ Baseado em {total_participantes} participantes, cada palpite equivale a **R$ {valor_aposta:.2f}**.")
             
             jogos_fin = supabase.table("jogos").select("*").eq("rodada", rod_fin).limit(10000).execute().data
             
@@ -759,26 +765,139 @@ else:
                     vol_c = qtd_c * valor_aposta
                     vol_e = qtd_e * valor_aposta
                     vol_f = qtd_f * valor_aposta
+                    total_arrecadado_neste = vol_c + vol_e + vol_f
                     
                     df_resumo = pd.DataFrame({
                         "Opção": ["Casa", "Empate", "Fora"],
                         "Qtd Palpites": [qtd_c, qtd_e, qtd_f],
-                        "Odds": [odd_c, odd_e, odd_f],
-                        "Volume (R$)": [f"R$ {vol_c:.2f}", f"R$ {vol_e:.2f}", f"R$ {vol_f:.2f}"]
+                        "Odds": [f"{odd_c:.2f}", f"{odd_e:.2f}", f"{odd_f:.2f}"],
+                        "Apostas (R$)": [f"R$ {vol_c:.2f}", f"R$ {vol_e:.2f}", f"R$ {vol_f:.2f}"]
                     })
                     st.table(df_resumo.set_index("Opção"))
                     
-                    st.write("**Projeção de Resultado (Prêmio se vencer e perdas se errar):**")
-                    df_proj = pd.DataFrame({
-                        "Cenário": ["Se CASA vencer", "Se EMPATE vencer", "Se FORA vencer"],
-                        "Casa Fica Com": [f"R$ {vol_c * odd_c:.2f}", f"-R$ {vol_c:.2f}", f"-R$ {vol_c:.2f}"],
-                        "Empate Fica Com": [f"-R$ {vol_e:.2f}", f"R$ {vol_e * odd_e:.2f}", f"-R$ {vol_e:.2f}"],
-                        "Fora Fica Com": [f"-R$ {vol_f:.2f}", f"-R$ {vol_f:.2f}", f"R$ {vol_f * odd_f:.2f}"]
-                    })
-                    st.table(df_proj.set_index("Cenário"))
+                    # SE JÁ TIVER RESULTADO, MOSTRA O REAL. SE NÃO, MOSTRA PROJEÇÃO.
+                    if jogo.get('resultado_real'):
+                        res_real = jogo['resultado_real']
+                        st.success(f"✅ **Resultado Oficial Finalizado: {res_real}**")
+                        
+                        if res_real == jogo['time_casa']:
+                            premio_pago = vol_c * odd_c
+                            desc = f"🏆 Casa ganha R$ {premio_pago:.2f} | ❌ Empate perde -R$ {vol_e:.2f} | ❌ Fora perde -R$ {vol_f:.2f}"
+                        elif res_real == 'Empate' or res_real == 'Empate (Auto)':
+                            premio_pago = vol_e * odd_e
+                            desc = f"❌ Casa perde -R$ {vol_c:.2f} | 🏆 Empate ganha R$ {premio_pago:.2f} | ❌ Fora perde -R$ {vol_f:.2f}"
+                        else:
+                            premio_pago = vol_f * odd_f
+                            desc = f"❌ Casa perde -R$ {vol_c:.2f} | ❌ Empate perde -R$ {vol_e:.2f} | 🏆 Fora ganha R$ {premio_pago:.2f}"
+                            
+                        saldo_banca = total_arrecadado_neste - premio_pago
+                        
+                        st.write(desc)
+                        cor_saldo = "green" if saldo_banca >= 0 else "red"
+                        st.markdown(f"**💰 Saldo da Banca:** <span style='color:{cor_saldo}; font-size:18px;'>**R$ {saldo_banca:.2f}**</span>", unsafe_allow_html=True)
+                        
+                    else:
+                        st.write("**Projeção de Resultado (Se o jogo terminar com...):**")
+                        df_proj = pd.DataFrame({
+                            "Cenário": ["Vitória CASA", "Dar EMPATE", "Vitória FORA"],
+                            "Prêmio a Pagar": [f"R$ {vol_c * odd_c:.2f}", f"R$ {vol_e * odd_e:.2f}", f"R$ {vol_f * odd_f:.2f}"],
+                            "Banca Fica Com": [f"R$ {(total_arrecadado_neste - (vol_c * odd_c)):.2f}", f"R$ {(total_arrecadado_neste - (vol_e * odd_e)):.2f}", f"R$ {(total_arrecadado_neste - (vol_f * odd_f)):.2f}"]
+                        })
+                        st.table(df_proj.set_index("Cenário"))
+                        
                     st.divider()
             else:
                 st.info("Nenhum jogo registado para esta rodada.")
+
+        with aba_resumo:
+            st.subheader("📊 Resumo Geral Financeiro (Apenas jogos encerrados)")
+            
+            usuarios_res = supabase.table("usuarios").select("id").execute().data
+            tot_part_res = len(usuarios_res) if usuarios_res else 1
+            valor_tot_jogo_res = st.number_input("Valor Total Arrecadado por Jogo (R$):", min_value=1.0, value=110.0, step=10.0, key="cfg_resumo_valor")
+            val_aposta = valor_tot_jogo_res / tot_part_res
+            
+            jogos_encerrados = buscar_todos_jogos_encerrados()
+            
+            if not jogos_encerrados:
+                st.info("Ainda não existem resultados finais lançados para calcular o balanço.")
+            else:
+                ids_jogos_encerrados = [j['id'] for j in jogos_encerrados]
+                palp_res_brutos = buscar_todos_palpites(filtro_ids_jogos=ids_jogos_encerrados)
+                
+                df_palp_res = pd.DataFrame(palp_res_brutos) if palp_res_brutos else pd.DataFrame(columns=['id_jogo', 'nome_amigo', 'palpite'])
+                if not df_palp_res.empty:
+                    df_palp_res['join_nome'] = df_palp_res['nome_amigo'].astype(str).str.strip().str.lower()
+                    df_palp_res['join_id'] = df_palp_res['id_jogo'].astype(str).str.strip()
+                    df_palp_res = df_palp_res.drop_duplicates(subset=['join_nome', 'join_id'], keep='last')
+                    palpites_res = df_palp_res.to_dict('records')
+                else:
+                    palpites_res = []
+
+                resumo_rodadas = {}
+                
+                for jogo in jogos_encerrados:
+                    rodada = jogo['rodada']
+                    if rodada not in resumo_rodadas:
+                        resumo_rodadas[rodada] = {"arrecadado": 0.0, "pago": 0.0, "saldo": 0.0}
+                    
+                    res_real = jogo['resultado_real']
+                    odd_c = float(jogo.get('odd_casa') or 1.0)
+                    odd_e = float(jogo.get('odd_empate') or 1.0)
+                    odd_f = float(jogo.get('odd_fora') or 1.0)
+                    
+                    qtd_c = sum(1 for p in palpites_res if str(p['id_jogo']) == str(jogo['id']) and p['palpite'] == jogo['time_casa'])
+                    qtd_e = sum(1 for p in palpites_res if str(p['id_jogo']) == str(jogo['id']) and (p['palpite'] == 'Empate' or 'Empate' in p['palpite']))
+                    qtd_f = sum(1 for p in palpites_res if str(p['id_jogo']) == str(jogo['id']) and p['palpite'] == jogo['time_fora'])
+                    
+                    vol_c = qtd_c * val_aposta
+                    vol_e = qtd_e * val_aposta
+                    vol_f = qtd_f * val_aposta
+                    arrecadado_neste = vol_c + vol_e + vol_f
+                    
+                    premio_neste = 0.0
+                    if res_real == jogo['time_casa']:
+                        premio_neste = vol_c * odd_c
+                    elif res_real == 'Empate' or res_real == 'Empate (Auto)':
+                        premio_neste = vol_e * odd_e
+                    elif res_real == jogo['time_fora']:
+                        premio_neste = vol_f * odd_f
+                        
+                    resumo_rodadas[rodada]["arrecadado"] += arrecadado_neste
+                    resumo_rodadas[rodada]["pago"] += premio_neste
+                    resumo_rodadas[rodada]["saldo"] += (arrecadado_neste - premio_neste)
+
+                tabela_resumo = []
+                total_arr = 0.0
+                total_pago = 0.0
+                total_saldo = 0.0
+                
+                for r in sorted(resumo_rodadas.keys()):
+                    arr = resumo_rodadas[r]["arrecadado"]
+                    pago = resumo_rodadas[r]["pago"]
+                    saldo = resumo_rodadas[r]["saldo"]
+                    
+                    total_arr += arr
+                    total_pago += pago
+                    total_saldo += saldo
+                    
+                    tabela_resumo.append({
+                        "Rodada": f"Rodada {r}",
+                        "Total Arrecadado": f"R$ {arr:.2f}",
+                        "Prêmios Pagos": f"R$ {pago:.2f}",
+                        "Saldo da Banca": f"R$ {saldo:.2f}"
+                    })
+                
+                # Linha de Totais
+                tabela_resumo.append({
+                    "Rodada": "TOTAL GERAL",
+                    "Total Arrecadado": f"R$ {total_arr:.2f}",
+                    "Prêmios Pagos": f"R$ {total_pago:.2f}",
+                    "Saldo da Banca": f"R$ {total_saldo:.2f}"
+                })
+                
+                df_res_view = pd.DataFrame(tabela_resumo)
+                st.table(df_res_view.set_index("Rodada"))
 
         with aba3:
             st.subheader("📱 Gerador de Relatórios WhatsApp")

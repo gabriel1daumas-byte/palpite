@@ -495,7 +495,11 @@ else:
             
             palpites = buscar_todos_palpites(filtro_ids_jogos=ids_jogos)
             
-            mapa_palpites = {(str(p['id_jogo']).strip(), str(p['nome_amigo']).strip().lower()): p['palpite'] for p in palpites}
+            mapa_palpites = {}
+            for p in palpites:
+                chave = (str(p['id_jogo']).strip(), str(p['nome_amigo']).strip().lower())
+                mapa_palpites[chave] = p['palpite']
+                
             dados_tabela = []
             
             for jogo in jogos:
@@ -591,7 +595,7 @@ else:
     # 10. ADMIN
     # ------------------------------------------
     elif menu == "⚙️ Admin":
-        aba1, aba2, aba_odds, aba3, aba4 = st.tabs(["Partidas", "Resultados", "📈 Lançar Odds", "Relatórios", "Pagamentos"])
+        aba1, aba2, aba_odds, aba_fin, aba3, aba4 = st.tabs(["Partidas", "Resultados", "📈 Lançar Odds", "💲 Financeiro", "Relatórios", "Pagamentos"])
         
         with aba1:
             st.subheader("1. Definir Rodada Ativa")
@@ -673,7 +677,6 @@ else:
             else:
                 st.write("Nenhum jogo registado para esta rodada.")
 
-        # --- NOVA ABA DE ODDS ---
         with aba_odds:
             st.subheader("📈 Lançar / Editar Odds da Rodada")
             rod_odds = st.number_input("Filtrar por Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_odds")
@@ -688,7 +691,6 @@ else:
                         st.write(f"⚽ **{jogo['time_casa']} x {jogo['time_fora']}**")
                         
                         col_c, col_e, col_f = st.columns(3)
-                        # Busca o valor que está no banco, se não tiver nada (None), começa com 1.00
                         val_c = float(jogo.get('odd_casa') or 1.00)
                         val_e = float(jogo.get('odd_empate') or 1.00)
                         val_f = float(jogo.get('odd_fora') or 1.00)
@@ -711,7 +713,73 @@ else:
                         st.rerun()
             else:
                 st.write("Nenhum jogo registado para esta rodada.")
-        
+
+        # --- NOVA ABA: FINANCEIRO ---
+        with aba_fin:
+            st.subheader("💲 Projeção Financeira por Partida")
+            rod_fin = st.number_input("Escolha a Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_fin")
+            
+            # Conta os participantes automaticamente direto do banco de dados
+            usuarios_fin = supabase.table("usuarios").select("id").execute().data
+            total_participantes = len(usuarios_fin) if usuarios_fin else 1
+            
+            valor_total_jogo = st.number_input("Valor Total Arrecadado por Jogo (R$):", min_value=1.0, value=110.0, step=10.0)
+            valor_aposta = valor_total_jogo / total_participantes
+            
+            st.caption(f"ℹ️ Baseado em {total_participantes} participantes cadastrados, o valor de cada palpite equivale a **R$ {valor_aposta:.2f}**.")
+            
+            jogos_fin = supabase.table("jogos").select("*").eq("rodada", rod_fin).limit(10000).execute().data
+            
+            if jogos_fin:
+                jogos_fin = sorted(jogos_fin, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+                ids_jogos_fin = [j['id'] for j in jogos_fin]
+                
+                palpites_brutos = buscar_todos_palpites(filtro_ids_jogos=ids_jogos_fin)
+                df_palp_fin = pd.DataFrame(palpites_brutos) if palpites_brutos else pd.DataFrame(columns=['id_jogo', 'nome_amigo', 'palpite'])
+                
+                if not df_palp_fin.empty:
+                    df_palp_fin['join_nome'] = df_palp_fin['nome_amigo'].astype(str).str.strip().str.lower()
+                    df_palp_fin['join_id'] = df_palp_fin['id_jogo'].astype(str).str.strip()
+                    df_palp_fin = df_palp_fin.drop_duplicates(subset=['join_nome', 'join_id'], keep='last')
+                    palpites_fin = df_palp_fin.to_dict('records')
+                else:
+                    palpites_fin = []
+                
+                for jogo in jogos_fin:
+                    st.write(f"### ⚽ {jogo['time_casa']} x {jogo['time_fora']}")
+                    
+                    odd_c = float(jogo.get('odd_casa') or 1.0)
+                    odd_e = float(jogo.get('odd_empate') or 1.0)
+                    odd_f = float(jogo.get('odd_fora') or 1.0)
+                    
+                    qtd_c = sum(1 for p in palpites_fin if str(p['id_jogo']) == str(jogo['id']) and p['palpite'] == jogo['time_casa'])
+                    qtd_e = sum(1 for p in palpites_fin if str(p['id_jogo']) == str(jogo['id']) and (p['palpite'] == 'Empate' or 'Empate' in p['palpite']))
+                    qtd_f = sum(1 for p in palpites_fin if str(p['id_jogo']) == str(jogo['id']) and p['palpite'] == jogo['time_fora'])
+                    
+                    vol_c = qtd_c * valor_aposta
+                    vol_e = qtd_e * valor_aposta
+                    vol_f = qtd_f * valor_aposta
+                    
+                    df_resumo = pd.DataFrame({
+                        "Opção": ["Casa", "Empate", "Fora"],
+                        "Qtd Palpites": [qtd_c, qtd_e, qtd_f],
+                        "Odds": [odd_c, odd_e, odd_f],
+                        "Volume (R$)": [f"R$ {vol_c:.2f}", f"R$ {vol_e:.2f}", f"R$ {vol_f:.2f}"]
+                    })
+                    st.table(df_resumo.set_index("Opção"))
+                    
+                    st.write("**Projeção de Resultado (Prêmio se vencer e perdas se errar):**")
+                    df_proj = pd.DataFrame({
+                        "Cenário": ["Se CASA vencer", "Se EMPATE vencer", "Se FORA vencer"],
+                        "Casa Fica Com": [f"R$ {vol_c * odd_c:.2f}", f"-R$ {vol_c:.2f}", f"-R$ {vol_c:.2f}"],
+                        "Empate Fica Com": [f"-R$ {vol_e:.2f}", f"R$ {vol_e * odd_e:.2f}", f"-R$ {vol_e:.2f}"],
+                        "Fora Fica Com": [f"-R$ {vol_f:.2f}", f"-R$ {vol_f:.2f}", f"R$ {vol_f * odd_f:.2f}"]
+                    })
+                    st.table(df_proj.set_index("Cenário"))
+                    st.divider()
+            else:
+                st.info("Nenhum jogo registado para esta rodada.")
+
         with aba3:
             st.subheader("📱 Gerador de Relatórios WhatsApp")
             st.write(f"Estes relatórios baseiam-se na **Rodada {rodada_ativa_atual} (Ativa)**.")

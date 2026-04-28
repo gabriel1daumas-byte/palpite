@@ -87,6 +87,18 @@ def decodificar_sessao(codigo):
     except:
         return None
 
+# FÓRMULA MÁGICA PARA ORDENAR JOGOS POR HORÁRIO EXATO (Sem falhas alfabéticas)
+def ordenar_jogos_por_horario(lista_jogos):
+    def get_ts(j):
+        hf = j.get('horario_fechamento')
+        if not hf:
+            return float('inf')
+        try:
+            return converter_para_br(hf).timestamp()
+        except Exception:
+            return float('inf')
+    return sorted(lista_jogos, key=get_ts)
+
 if "logado" not in st.session_state:
     st.session_state.logado = False
     st.session_state.nome_usuario = ""
@@ -201,7 +213,7 @@ else:
             palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
             mapa_ja_palpitou = {str(p['id_jogo']).strip(): p['palpite'] for p in palpites_existentes}
             
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+            jogos = ordenar_jogos_por_horario(jogos)
             
             jogos_abertos = []
             for jogo in jogos:
@@ -217,7 +229,6 @@ else:
                 with st.form("form_palpites"):
                     palpites_feitos = {}
                     for jogo in jogos_abertos:
-                        # Exibe a odd formatada se existir no banco
                         odd_c_texto = f" (Odd: {jogo.get('odd_casa'):.2f})" if jogo.get('odd_casa') else ""
                         odd_e_texto = f" (Odd: {jogo.get('odd_empate'):.2f})" if jogo.get('odd_empate') else ""
                         odd_f_texto = f" (Odd: {jogo.get('odd_fora'):.2f})" if jogo.get('odd_fora') else ""
@@ -340,7 +351,7 @@ else:
             if ids_jogos:
                 meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos).execute().data
             
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+            jogos = ordenar_jogos_por_horario(jogos)
             agora = datetime.now(fuso_br)
             
             mapa_meus = {str(p['id_jogo']).strip(): p['palpite'] for p in meus_palpites}
@@ -495,7 +506,7 @@ else:
         agora = datetime.now(fuso_br)
         
         if jogos:
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+            jogos = ordenar_jogos_por_horario(jogos)
             ids_jogos = [j['id'] for j in jogos]
             ordem_cronologica_partidas = [f"{j['time_casa']} x {j['time_fora']}" for j in jogos]
             
@@ -543,7 +554,7 @@ else:
         jogos = supabase.table("jogos").select("*").eq("rodada", rodada).execute().data
         
         if jogos:
-            jogos = sorted(jogos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+            jogos = ordenar_jogos_por_horario(jogos)
             dados_view = []
             for jogo in jogos:
                 partida = f"{jogo['time_casa']} x {jogo['time_fora']}"
@@ -660,7 +671,7 @@ else:
             jogos_rodada = supabase.table("jogos").select("*").eq("rodada", rod_resultado).limit(10000).execute().data
             
             if jogos_rodada:
-                jogos_rodada = sorted(jogos_rodada, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+                jogos_rodada = ordenar_jogos_por_horario(jogos_rodada)
                 for jogo in jogos_rodada:
                     res_atual = jogo.get("resultado_real")
                     opcoes = [jogo['time_casa'], "Empate", jogo['time_fora']]
@@ -691,7 +702,7 @@ else:
             jogos_odds = supabase.table("jogos").select("*").eq("rodada", rod_odds).limit(10000).execute().data
             
             if jogos_odds:
-                jogos_odds = sorted(jogos_odds, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+                jogos_odds = ordenar_jogos_por_horario(jogos_odds)
                 
                 with st.form(f"form_odds_{rod_odds}"):
                     odds_atualizadas = {}
@@ -737,7 +748,7 @@ else:
             jogos_fin = supabase.table("jogos").select("*").eq("rodada", rod_fin).limit(10000).execute().data
             
             if jogos_fin:
-                jogos_fin = sorted(jogos_fin, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+                jogos_fin = ordenar_jogos_por_horario(jogos_fin)
                 ids_jogos_fin = [j['id'] for j in jogos_fin]
                 
                 palpites_brutos = buscar_todos_palpites(filtro_ids_jogos=ids_jogos_fin)
@@ -775,7 +786,6 @@ else:
                     })
                     st.table(df_resumo.set_index("Opção"))
                     
-                    # SE JÁ TIVER RESULTADO, MOSTRA O REAL. SE NÃO, MOSTRA PROJEÇÃO.
                     if jogo.get('resultado_real'):
                         res_real = jogo['resultado_real']
                         st.success(f"✅ **Resultado Oficial Finalizado: {res_real}**")
@@ -888,7 +898,6 @@ else:
                         "Saldo da Banca": f"R$ {saldo:.2f}"
                     })
                 
-                # Linha de Totais
                 tabela_resumo.append({
                     "Rodada": "TOTAL GERAL",
                     "Total Arrecadado": f"R$ {total_arr:.2f}",
@@ -928,7 +937,7 @@ else:
                         st.success("🎉 Todos os utilizadores já fizeram palpites nesta rodada!")
                 
                 if st.button("⚽ Gerar Agenda de Jogos", use_container_width=True):
-                    jogos_ativos_ordenados = sorted(jogos_ativos, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+                    jogos_ativos_ordenados = ordenar_jogos_por_horario(jogos_ativos)
                     msg = f"🏆 *Agenda da Rodada {rodada_ativa_atual}*\n\n"
                     for j in jogos_ativos_ordenados:
                         fechamento = converter_para_br(j['horario_fechamento'])

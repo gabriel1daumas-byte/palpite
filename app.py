@@ -763,8 +763,6 @@ else:
                     palpites_fin = []
                 
                 for jogo in jogos_fin:
-                    st.write(f"### ⚽ {jogo['time_casa']} x {jogo['time_fora']}")
-                    
                     odd_c = float(jogo.get('odd_casa') or 1.0)
                     odd_e = float(jogo.get('odd_empate') or 1.0)
                     odd_f = float(jogo.get('odd_fora') or 1.0)
@@ -773,13 +771,26 @@ else:
                     qtd_e = sum(1 for p in palpites_fin if str(p['id_jogo']) == str(jogo['id']) and (p['palpite'] == 'Empate' or 'Empate' in p['palpite']))
                     qtd_f = sum(1 for p in palpites_fin if str(p['id_jogo']) == str(jogo['id']) and p['palpite'] == jogo['time_fora'])
                     
+                    total_palpites_jogo = qtd_c + qtd_e + qtd_f
+                    
                     vol_c = qtd_c * valor_aposta
                     vol_e = qtd_e * valor_aposta
                     vol_f = qtd_f * valor_aposta
                     
+                    st.write(f"### ⚽ {jogo['time_casa']} x {jogo['time_fora']}")
+                    st.caption(f"👥 **Total de Palpites Registrados neste jogo:** {total_palpites_jogo}")
+                    
+                    df_resumo = pd.DataFrame({
+                        "Opção": ["Casa", "Empate", "Fora"],
+                        "Qtd Palpites": [qtd_c, qtd_e, qtd_f],
+                        "Odds": [f"{odd_c:.2f}", f"{odd_e:.2f}", f"{odd_f:.2f}"],
+                        "Apostas (R$)": [f"R$ {vol_c:.2f}", f"R$ {vol_e:.2f}", f"R$ {vol_f:.2f}"]
+                    })
+                    st.table(df_resumo.set_index("Opção"))
+                    
                     if jogo.get('resultado_real'):
                         res_real = jogo['resultado_real']
-                        st.success(f"✅ **Resultado Oficial: {res_real}**")
+                        st.success(f"✅ **Resultado Oficial Finalizado: {res_real}**")
                         
                         if res_real == jogo['time_casa']:
                             val_ganhador = vol_c * odd_c

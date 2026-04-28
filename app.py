@@ -34,9 +34,8 @@ def init_connection():
 supabase = init_connection()
 fuso_br = pytz.timezone('America/Sao_Paulo')
 
-# --- FUNÇÕES DE SUPORTE E PAGINAÇÃO (BLINDAGEM CONTRA O LIMITE DE 1000 LINHAS) ---
+# --- FUNÇÕES DE SUPORTE E PAGINAÇÃO ---
 def buscar_todos_palpites(filtro_ids_jogos=None):
-    """Bypass no limite de 1000 linhas do Supabase puxando em lotes de 1000"""
     dados = []
     inicio = 0
     while True:
@@ -55,7 +54,6 @@ def buscar_todos_palpites(filtro_ids_jogos=None):
     return dados
 
 def buscar_todos_jogos_encerrados():
-    """Garante que traz todos os jogos finalizados do campeonato, sem limite"""
     dados = []
     inicio = 0
     while True:
@@ -200,7 +198,6 @@ else:
             agora = datetime.now(fuso_br)
             ids_jogos_rodada = [j['id'] for j in jogos]
             
-            # Aqui é só os palpites da pessoa ativa na rodada atual, não chega a 10 nunca
             palpites_existentes = supabase.table("palpites").select("id_jogo, palpite").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos_rodada).execute().data
             mapa_ja_palpitou = {str(p['id_jogo']).strip(): p['palpite'] for p in palpites_existentes}
             
@@ -283,7 +280,6 @@ else:
             df_usuarios = pd.DataFrame(res_usuarios)
             df_palpites = pd.DataFrame(res_palpites) if res_palpites else pd.DataFrame(columns=["nome_amigo", "id_jogo", "palpite"])
             
-            # Normalização para blindar e remover votos duplos
             df_usuarios['join_nome'] = df_usuarios['nome'].astype(str).str.strip().str.lower()
             df_jogos['join_id'] = df_jogos['id'].astype(str).str.strip()
             
@@ -334,7 +330,6 @@ else:
         
         if jogos:
             ids_jogos = [j['id'] for j in jogos]
-            # Aqui é seguro usar o Execute direto, porque 10 jogos no máximo dá 10 linhas pro utilizador logado
             meus_palpites = []
             if ids_jogos:
                 meus_palpites = supabase.table("palpites").select("*").eq("nome_amigo", st.session_state.nome_usuario).in_("id_jogo", ids_jogos).execute().data
@@ -498,10 +493,8 @@ else:
             ids_jogos = [j['id'] for j in jogos]
             ordem_cronologica_partidas = [f"{j['time_casa']} x {j['time_fora']}" for j in jogos]
             
-            # Chama a função de paginação para não ter corte na rodada!
             palpites = buscar_todos_palpites(filtro_ids_jogos=ids_jogos)
             
-            # Removemos letras maiúsculas e espaços de segurança também aqui
             mapa_palpites = {(str(p['id_jogo']).strip(), str(p['nome_amigo']).strip().lower()): p['palpite'] for p in palpites}
             dados_tabela = []
             
@@ -559,7 +552,6 @@ else:
     elif menu == "Pagamento":
         st.subheader("💰 Controlo de Pagamento Mensal")
         st.write("Acompanhe o estado das mensalidades (X = Pago).")
-        # Pagamento dificilmente passa de 1000 linhas, mas mantive o limit 10000 se o DB for flexível depois
         res_pagamentos = supabase.table("pagamentos").select("*").limit(10000).execute().data
         
         if res_pagamentos:
@@ -599,7 +591,7 @@ else:
     # 10. ADMIN
     # ------------------------------------------
     elif menu == "⚙️ Admin":
-        aba1, aba2, aba3, aba4 = st.tabs(["Partidas e Rodada", "Lançar Resultados", "📱 Relatórios WhatsApp", "💰 Gerir Pagamentos"])
+        aba1, aba2, aba_odds, aba3, aba4 = st.tabs(["Partidas", "Resultados", "📈 Lançar Odds", "Relatórios", "Pagamentos"])
         
         with aba1:
             st.subheader("1. Definir Rodada Ativa")
@@ -680,6 +672,45 @@ else:
                     st.write("---")
             else:
                 st.write("Nenhum jogo registado para esta rodada.")
+
+        # --- NOVA ABA DE ODDS ---
+        with aba_odds:
+            st.subheader("📈 Lançar / Editar Odds da Rodada")
+            rod_odds = st.number_input("Filtrar por Rodada", min_value=1, step=1, value=rodada_ativa_atual, key="rod_odds")
+            jogos_odds = supabase.table("jogos").select("*").eq("rodada", rod_odds).limit(10000).execute().data
+            
+            if jogos_odds:
+                jogos_odds = sorted(jogos_odds, key=lambda x: x.get('horario_fechamento') or '9999-12-31')
+                
+                with st.form(f"form_odds_{rod_odds}"):
+                    odds_atualizadas = {}
+                    for jogo in jogos_odds:
+                        st.write(f"⚽ **{jogo['time_casa']} x {jogo['time_fora']}**")
+                        
+                        col_c, col_e, col_f = st.columns(3)
+                        # Busca o valor que está no banco, se não tiver nada (None), começa com 1.00
+                        val_c = float(jogo.get('odd_casa') or 1.00)
+                        val_e = float(jogo.get('odd_empate') or 1.00)
+                        val_f = float(jogo.get('odd_fora') or 1.00)
+                        
+                        odd_c = col_c.number_input(f"Casa ({jogo['time_casa']})", min_value=1.0, step=0.01, value=val_c, key=f"odd_c_{jogo['id']}")
+                        odd_e = col_e.number_input("Empate", min_value=1.0, step=0.01, value=val_e, key=f"odd_e_{jogo['id']}")
+                        odd_f = col_f.number_input(f"Fora ({jogo['time_fora']})", min_value=1.0, step=0.01, value=val_f, key=f"odd_f_{jogo['id']}")
+                        
+                        odds_atualizadas[jogo['id']] = {"odd_casa": odd_c, "odd_empate": odd_e, "odd_fora": odd_f}
+                        st.write("---")
+                    
+                    if st.form_submit_button("💾 Salvar Todas as Odds", use_container_width=True):
+                        for id_j, odds in odds_atualizadas.items():
+                            supabase.table("jogos").update({
+                                "odd_casa": odds["odd_casa"],
+                                "odd_empate": odds["odd_empate"],
+                                "odd_fora": odds["odd_fora"]
+                            }).eq("id", id_j).execute()
+                        st.success("Odds da rodada salvas com sucesso!")
+                        st.rerun()
+            else:
+                st.write("Nenhum jogo registado para esta rodada.")
         
         with aba3:
             st.subheader("📱 Gerador de Relatórios WhatsApp")
@@ -694,7 +725,6 @@ else:
                     nomes_todos = [u['nome'] for u in todos_usuarios]
                     ids_jogos = [j['id'] for j in jogos_ativos]
                     
-                    # Usa a nossa super função aqui também
                     palpites_feitos = buscar_todos_palpites(filtro_ids_jogos=ids_jogos)
                         
                     nomes_votaram = set([p['nome_amigo'] for p in palpites_feitos])

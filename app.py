@@ -793,28 +793,28 @@ else:
                         st.success(f"✅ **Resultado Oficial Finalizado: {res_real}**")
                         
                         if res_real == jogo['time_casa']:
-                            val_ganhador = vol_c * odd_c
+                            lucro_ganhador = (vol_c * odd_c) - vol_c
                             val_p1 = -vol_e
                             val_p2 = -vol_f
-                            texto_v = f"✅ {jogo['time_casa']}: R$ {val_ganhador:.2f}"
-                            texto_p1 = f"❌ Empate: -R$ {abs(val_p1):.2f}"
-                            texto_p2 = f"❌ {jogo['time_fora']}: -R$ {abs(val_p2):.2f}"
+                            texto_v = f"✅ {jogo['time_casa']} (Lucro): R$ {lucro_ganhador:.2f}"
+                            texto_p1 = f"❌ Empate (Perda): -R$ {abs(val_p1):.2f}"
+                            texto_p2 = f"❌ {jogo['time_fora']} (Perda): -R$ {abs(val_p2):.2f}"
                         elif res_real == 'Empate' or res_real == 'Empate (Auto)':
-                            val_ganhador = vol_e * odd_e
+                            lucro_ganhador = (vol_e * odd_e) - vol_e
                             val_p1 = -vol_c
                             val_p2 = -vol_f
-                            texto_v = f"✅ Empate: R$ {val_ganhador:.2f}"
-                            texto_p1 = f"❌ {jogo['time_casa']}: -R$ {abs(val_p1):.2f}"
-                            texto_p2 = f"❌ {jogo['time_fora']}: -R$ {abs(val_p2):.2f}"
+                            texto_v = f"✅ Empate (Lucro): R$ {lucro_ganhador:.2f}"
+                            texto_p1 = f"❌ {jogo['time_casa']} (Perda): -R$ {abs(val_p1):.2f}"
+                            texto_p2 = f"❌ {jogo['time_fora']} (Perda): -R$ {abs(val_p2):.2f}"
                         else:
-                            val_ganhador = vol_f * odd_f
+                            lucro_ganhador = (vol_f * odd_f) - vol_f
                             val_p1 = -vol_c
                             val_p2 = -vol_e
-                            texto_v = f"✅ {jogo['time_fora']}: R$ {val_ganhador:.2f}"
-                            texto_p1 = f"❌ {jogo['time_casa']}: -R$ {abs(val_p1):.2f}"
-                            texto_p2 = f"❌ Empate: -R$ {abs(val_p2):.2f}"
+                            texto_v = f"✅ {jogo['time_fora']} (Lucro): R$ {lucro_ganhador:.2f}"
+                            texto_p1 = f"❌ {jogo['time_casa']} (Perda): -R$ {abs(val_p1):.2f}"
+                            texto_p2 = f"❌ Empate (Perda): -R$ {abs(val_p2):.2f}"
                             
-                        valor_jogo = val_ganhador + val_p1 + val_p2
+                        valor_jogo = lucro_ganhador + val_p1 + val_p2
                         
                         st.write(texto_v)
                         st.write(texto_p1)
@@ -826,9 +826,9 @@ else:
                         df_proj = pd.DataFrame({
                             "Se Resultado For:": [f"{jogo['time_casa']}", "Empate", f"{jogo['time_fora']}"],
                             "Valor do Jogo (Soma)": [
-                                f"R$ {((vol_c * odd_c) - vol_e - vol_f):.2f}",
-                                f"R$ {((vol_e * odd_e) - vol_c - vol_f):.2f}",
-                                f"R$ {((vol_f * odd_f) - vol_c - vol_e):.2f}"
+                                f"R$ {(((vol_c * odd_c) - vol_c) - vol_e - vol_f):.2f}",
+                                f"R$ {(((vol_e * odd_e) - vol_e) - vol_c - vol_f):.2f}",
+                                f"R$ {(((vol_f * odd_f) - vol_f) - vol_c - vol_e):.2f}"
                             ]
                         })
                         st.table(df_proj.set_index("Se Resultado For:"))
@@ -884,11 +884,11 @@ else:
                     
                     valor_jogo_neste = 0.0
                     if res_real == jogo['time_casa']:
-                        valor_jogo_neste = (vol_c * odd_c) - vol_e - vol_f
+                        valor_jogo_neste = ((vol_c * odd_c) - vol_c) - vol_e - vol_f
                     elif res_real == 'Empate' or res_real == 'Empate (Auto)':
-                        valor_jogo_neste = (vol_e * odd_e) - vol_c - vol_f
+                        valor_jogo_neste = ((vol_e * odd_e) - vol_e) - vol_c - vol_f
                     elif res_real == jogo['time_fora']:
-                        valor_jogo_neste = (vol_f * odd_f) - vol_c - vol_e
+                        valor_jogo_neste = ((vol_f * odd_f) - vol_f) - vol_c - vol_e
                         
                     resumo_rodadas[rodada]["valor_rodada"] += valor_jogo_neste
 
